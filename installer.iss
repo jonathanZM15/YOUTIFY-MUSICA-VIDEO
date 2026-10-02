@@ -1,5 +1,5 @@
 #define MyAppName "Youtify"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "1.0.3"
 #define MyAppPublisher "jonathanZM15"
 #define MyAppExeName "Youtify.exe"
 
@@ -21,10 +21,11 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
 Source: "dist\Youtify.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Youtify"; Filename: "{app}\{#MyAppExeName}"
-Name: "{autodesktop}\Youtify"; Filename: "{app}\{#MyAppExeName}"
+Name: "{autoprograms}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; IconIndex: 0
+Name: "{autodesktop}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; IconIndex: 0
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Youtify"; Flags: nowait postinstall skipifsilent
