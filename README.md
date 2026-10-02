@@ -4,12 +4,12 @@
 
 **Descargador de música y videos de YouTube para Windows**
 
-[![Build](https://github.com/jonathanZM15/YOUTIFY/actions/workflows/build-release.yml/badge.svg)](https://github.com/jonathanZM15/YOUTIFY/actions/workflows/build-release.yml)
+[![Build](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/actions/workflows/build-release.yml/badge.svg)](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/actions/workflows/build-release.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-**[Descargar instalador](https://github.com/jonathanZM15/YOUTIFY/releases/latest/download/Youtify-Setup.exe)** ·
-**[Ver versiones](https://github.com/jonathanZM15/YOUTIFY/releases)** ·
-**[Código fuente](https://github.com/jonathanZM15/YOUTIFY)**
+**[Descargar instalador](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases/latest/download/Youtify-Setup.exe)** ·
+**[Ver versiones](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases)** ·
+**[Código fuente](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO)**
 
 </div>
 
@@ -35,7 +35,7 @@ La forma más sencilla es descargar el instalador:
 4. Pega un enlace, selecciona MP3 o MP4 y pulsa **Descargar ahora**.
 
 El instalador se genera automáticamente desde GitHub Actions y se publica en
-la sección [Releases](https://github.com/jonathanZM15/YOUTIFY/releases).
+la sección [Releases](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases).
 
 > Windows Defender puede mostrar una advertencia para ejecutables sin firma
 > digital. El instalador es generado desde este código fuente open source.
@@ -46,8 +46,8 @@ Se necesita Python 3.12 o posterior. Node.js LTS es recomendable para ayudar a
 resolver los desafíos actuales de YouTube.
 
 ```powershell
-git clone https://github.com/jonathanZM15/YOUTIFY.git
-cd YOUTIFY
+git clone https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO.git
+cd YOUTIFY-MUSICA-VIDEO
 python -m venv .venv
 .venv\Scripts\activate
 python -m pip install --upgrade pip
