@@ -6,6 +6,7 @@ import tempfile
 import threading
 import urllib.request
 import zipfile
+import webbrowser
 from pathlib import Path
 from tkinter import messagebox
 
@@ -24,9 +25,13 @@ class YoutifyApp(ctk.CTk):
         self.geometry("700x650")
         self.resizable(False, False)
         self.directorio_actual = self._get_app_directory()
-        self.ffmpeg_directory = self.directorio_actual / "ffmpeg"
-        self.music_directory = self.directorio_actual / "Musica_Descargada"
-        self.video_directory = self.directorio_actual / "descargas_videos"
+        local_app_data = Path(
+            os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
+        )
+        self.ffmpeg_directory = local_app_data / "Youtify" / "ffmpeg"
+        downloads_directory = Path.home() / "Downloads" / "Youtify"
+        self.music_directory = downloads_directory / "Musica_Descargada"
+        self.video_directory = downloads_directory / "descargas_videos"
         self.icon_path = self.directorio_actual / "icon.ico"
         if self.icon_path.exists():
             self.iconbitmap(str(self.icon_path))
@@ -87,6 +92,16 @@ class YoutifyApp(ctk.CTk):
             self, text="", text_color=("#64748b", "#94a3b8"), font=("Arial", 11)
         )
         self.destination_label.pack(pady=(18, 10))
+        self.open_folder_button = ctk.CTkButton(
+            self,
+            text="Abrir carpeta de descargas",
+            width=220,
+            height=30,
+            fg_color="transparent",
+            border_width=1,
+            command=self._open_download_folder,
+        )
+        self.open_folder_button.pack(pady=(0, 10))
         self.format_menu.configure(command=self._update_destination)
         self._update_destination("MP3 (audio)")
 
@@ -119,6 +134,15 @@ class YoutifyApp(ctk.CTk):
             self.music_directory if selection.startswith("MP3") else self.video_directory
         )
         self.destination_label.configure(text=f"Destino: {destination}")
+
+    def _open_download_folder(self):
+        destination = (
+            self.music_directory
+            if self.format_menu.get().startswith("MP3")
+            else self.video_directory
+        )
+        destination.mkdir(parents=True, exist_ok=True)
+        os.startfile(destination)
 
     def log(self, message):
         self.after(0, self._append_log, message)

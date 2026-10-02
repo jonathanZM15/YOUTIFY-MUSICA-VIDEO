@@ -23,7 +23,7 @@ CustomTkinter.
 
 * Convierte videos y playlists a audio MP3.
 * Usa la mejor calidad de audio disponible.
-* Guarda automáticamente los archivos en `Musica_Descargada`.
+* Guarda automáticamente los archivos en `Descargas\Youtify\Musica_Descargada`.
 
 ### 🎬 Descargas de video
 
@@ -31,7 +31,7 @@ CustomTkinter.
 * Calidad máxima, 1080p, 720p, 480p o 360p.
 * Si un video de una playlist no tiene la calidad seleccionada, utiliza la
   mejor calidad disponible sin detener toda la playlist.
-* Guarda automáticamente los archivos en `descargas_videos`.
+* Guarda automáticamente los archivos en `Descargas\Youtify\descargas_videos`.
 
 ### 🖥️ Interfaz y funcionamiento
 
@@ -186,9 +186,9 @@ Al subir una etiqueta con el formato `vX.Y.Z`, GitHub Actions:
 
 | Carpeta | Contenido |
 | --- | --- |
-| `Musica_Descargada` | Archivos MP3 |
-| `descargas_videos` | Archivos MP4 |
-| `ffmpeg` | FFmpeg y FFprobe descargados automáticamente |
+| `Descargas\Youtify\Musica_Descargada` | Archivos MP3 |
+| `Descargas\Youtify\descargas_videos` | Archivos MP4 |
+| `%LOCALAPPDATA%\Youtify\ffmpeg` | FFmpeg y FFprobe descargados automáticamente |
 
 ---
 
