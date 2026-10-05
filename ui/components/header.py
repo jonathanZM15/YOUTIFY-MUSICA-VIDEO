@@ -27,7 +27,7 @@ class Header(ctk.CTkFrame):
         # Contenedor del icono con fondo sutil circular/redondeado
         self.icon_badge = ctk.CTkFrame(
             brand_row,
-            fg_color=("transparent", "transparent"),
+            fg_color="transparent",
             corner_radius=12,
             width=50,
             height=50,
