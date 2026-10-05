@@ -4,7 +4,7 @@ from ui.theme import Colors
 
 
 class DownloadCard(ctk.CTkFrame):
-    """Tarjeta de entrada moderna y minimalista con controles estilizados."""
+    """Tarjeta de entrada moderna y minimalista con controles y dropdowns estilizados."""
 
     def __init__(
         self,
@@ -50,7 +50,7 @@ class DownloadCard(ctk.CTkFrame):
         )
         self.url_entry.pack(fill="x", pady=(0, 14))
 
-        # ── Selectores alineados horizontalmente ──
+        # ── Selectores con menús flotantes estilizados y bordes armónicos ──
         options_row = ctk.CTkFrame(container, fg_color="transparent")
         options_row.pack(fill="x")
 
@@ -66,15 +66,20 @@ class DownloadCard(ctk.CTkFrame):
             options_row,
             values=["MP3 (audio)", "MP4 (video)"],
             state="readonly",
-            width=160,
-            height=32,
+            width=165,
+            height=34,
             corner_radius=8,
             border_width=1,
             border_color=Colors.BORDER_INPUT,
             fg_color=Colors.INPUT_BG,
-            button_color=Colors.BORDER_INPUT,
-            button_hover_color=Colors.BORDER,
+            text_color=Colors.TEXT_PRIMARY,
+            button_color=Colors.INPUT_BG,
+            button_hover_color=Colors.BTN_SECONDARY_HOVER,
+            dropdown_fg_color=Colors.DROPDOWN_BG,
+            dropdown_hover_color=Colors.DROPDOWN_HOVER,
+            dropdown_text_color=Colors.DROPDOWN_TEXT,
             font=("Segoe UI", 12),
+            dropdown_font=("Segoe UI", 12),
             command=on_format_change,
         )
         self.format_menu.set("MP3 (audio)")
@@ -92,15 +97,20 @@ class DownloadCard(ctk.CTkFrame):
             options_row,
             values=["Máxima", "1080p", "720p", "480p", "360p"],
             state="readonly",
-            width=130,
-            height=32,
+            width=135,
+            height=34,
             corner_radius=8,
             border_width=1,
             border_color=Colors.BORDER_INPUT,
             fg_color=Colors.INPUT_BG,
-            button_color=Colors.BORDER_INPUT,
-            button_hover_color=Colors.BORDER,
+            text_color=Colors.TEXT_PRIMARY,
+            button_color=Colors.INPUT_BG,
+            button_hover_color=Colors.BTN_SECONDARY_HOVER,
+            dropdown_fg_color=Colors.DROPDOWN_BG,
+            dropdown_hover_color=Colors.DROPDOWN_HOVER,
+            dropdown_text_color=Colors.DROPDOWN_TEXT,
             font=("Segoe UI", 12),
+            dropdown_font=("Segoe UI", 12),
         )
         self.quality_menu.set("Máxima")
         self.quality_menu.pack(side="left")

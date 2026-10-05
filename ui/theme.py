@@ -5,23 +5,28 @@ class Colors:
     APP_BG = ("#fafafa", "#090a0f")
     CARD_BG = ("#ffffff", "#12131a")
     CARD_HOVER = ("#f4f4f5", "#181922")
-    INPUT_BG = ("#f4f4f5", "#181924")
-    CONSOLE_BG = ("#f4f4f5", "#0d0e14")
+    INPUT_BG = ("#f4f4f5", "#161722")
+    CONSOLE_BG = ("#f4f4f5", "#0c0d12")
 
     # Bordes sutiles de alta fidelidad
-    BORDER = ("#e4e4e7", "#22232e")
-    BORDER_INPUT = ("#d4d4d8", "#2a2c3a")
+    BORDER = ("#e4e4e7", "#1e1f2b")
+    BORDER_INPUT = ("#d4d4d8", "#262838")
     BORDER_FOCUS = ("#0284c7", "#38bdf8")
+
+    # Dropdowns estilizados para comboboxes
+    DROPDOWN_BG = ("#ffffff", "#161722")
+    DROPDOWN_HOVER = ("#f4f4f5", "#212333")
+    DROPDOWN_TEXT = ("#18181b", "#f4f4f5")
 
     # Acento primario unificado (Cian Eléctrico / Azul Spotify/Linear)
     PRIMARY = ("#0284c7", "#0ea5e9")
     PRIMARY_HOVER = ("#0369a1", "#0284c7")
 
     # Botones secundarios / de acción sutil
-    BTN_SECONDARY_BG = ("#f4f4f5", "#1c1d28")
-    BTN_SECONDARY_HOVER = ("#e4e4e7", "#272937")
+    BTN_SECONDARY_BG = ("#f4f4f5", "#181924")
+    BTN_SECONDARY_HOVER = ("#e4e4e7", "#222433")
     BTN_SECONDARY_TEXT = ("#18181b", "#f4f4f5")
-    BTN_SECONDARY_BORDER = ("#e4e4e7", "#272938")
+    BTN_SECONDARY_BORDER = ("#e4e4e7", "#262838")
 
     # Tipografía cuidada
     TEXT_BRAND = ("#0284c7", "#38bdf8")
