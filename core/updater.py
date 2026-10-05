@@ -5,24 +5,28 @@ from typing import Callable, Optional
 
 
 class Updater:
-    """Comprueba y actualiza silenciosamente yt-dlp en segundo plano para mitigar cambios en YouTube."""
+    """Comprueba de forma segura actualizaciones de red sin reejecutar el binario compilado."""
 
     @classmethod
     def check_and_update_async(cls, log_callback: Optional[Callable[[str], None]] = None) -> None:
+        # En binarios compilados de PyInstaller (sys.frozen), sys.executable es Youtify.exe, no python.exe!
+        # Si se ejecuta sys.executable -m pip en un .exe de PyInstaller, se abre Youtify infinitas veces.
+        if getattr(sys, "frozen", False):
+            # En modo .exe compilado, no llamar a pip via sys.executable
+            return
+
         def _task():
             try:
-                # Comprobación segura con subprocess
                 result = subprocess.run(
                     [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--no-warn-script-location"],
                     capture_output=True,
                     text=True,
-                    timeout=45,
+                    timeout=30,
                 )
                 if result.returncode == 0:
                     if "Requirement already satisfied" not in result.stdout and log_callback:
-                        log_callback("[*] Componente de red yt-dlp actualizado automáticamente.")
+                        log_callback("[*] yt-dlp actualizado a la versión más reciente.")
             except Exception:
-                # Silencioso para no degradar la experiencia de usuario si no hay conexión
                 pass
 
         threading.Thread(target=_task, daemon=True).start()
