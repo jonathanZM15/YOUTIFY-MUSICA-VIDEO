@@ -178,26 +178,40 @@ class AppWindow(ctk.CTk):
     def _on_url_modified(self, url: str) -> None:
         if self._inspect_timer:
             self.after_cancel(self._inspect_timer)
+            self._inspect_timer = None
 
-        if not SecurityValidator.is_valid_youtube_url(url):
+        clean_url = url.strip()
+        if not SecurityValidator.is_valid_youtube_url(clean_url):
             self.preview_card.hide_preview()
             return
 
-        # Debounce de 400ms para no saturar peticiones mientras se escribe
-        self._inspect_timer = self.after(400, lambda: self._inspect_url_async(url))
+        # Debounce de 350ms para no saturar peticiones mientras se escribe
+        self._inspect_timer = self.after(350, lambda: self._inspect_url_async(clean_url))
 
-    def _inspect_url_async(self, url: str) -> None:
+    def _inspect_url_async(self, target_url: str) -> None:
         def _task():
-            meta = DownloadEngine.extract_metadata_fast(url)
-            if meta:
-                self.after(0, lambda: self.preview_card.show_preview(
-                    title=meta["title"],
-                    channel=meta["channel"],
-                    duration=f"{meta['duration']} canciones" if meta["is_playlist"] else meta["duration"],
-                    thumbnail_url=meta["thumbnail"],
-                ))
-            else:
+            # Si el usuario ya borró o descargó el enlace, abortar
+            current_url = self.download_card.get_url()
+            if current_url != target_url:
                 self.after(0, self.preview_card.hide_preview)
+                return
+
+            meta = DownloadEngine.extract_metadata_fast(target_url)
+
+            # Verificar nuevamente en el hilo principal antes de mostrar
+            def _apply_meta():
+                if self.download_card.get_url() == target_url and meta:
+                    self.preview_card.show_preview(
+                        title=meta["title"],
+                        channel=meta["channel"],
+                        duration=f"{meta['duration']} canciones" if meta["is_playlist"] else meta["duration"],
+                        thumbnail_url=meta["thumbnail"],
+                        after_widget=self.download_card,
+                    )
+                else:
+                    self.preview_card.hide_preview()
+
+            self.after(0, _apply_meta)
 
         threading.Thread(target=_task, daemon=True).start()
 

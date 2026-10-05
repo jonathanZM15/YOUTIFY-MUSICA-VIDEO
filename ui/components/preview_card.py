@@ -62,7 +62,14 @@ class PreviewCard(ctk.CTkFrame):
         )
         self.details_label.pack(fill="x", pady=(2, 0))
 
-    def show_preview(self, title: str, channel: str, duration: str, thumbnail_url: Optional[str] = None):
+    def show_preview(
+        self,
+        title: str,
+        channel: str,
+        duration: str,
+        thumbnail_url: Optional[str] = None,
+        after_widget: Optional[ctk.CTkBaseClass] = None,
+    ):
         short_title = title if len(title) <= 65 else title[:62] + "..."
         self.title_label.configure(text=short_title)
         self.details_label.configure(text=f"👤 {channel}   •   ⏱️ {duration}")
@@ -70,7 +77,10 @@ class PreviewCard(ctk.CTkFrame):
         if thumbnail_url:
             threading.Thread(target=self._fetch_and_render_thumb, args=(thumbnail_url,), daemon=True).start()
 
-        self.pack(fill="x", padx=35, pady=(0, 6))
+        if after_widget:
+            self.pack(fill="x", padx=35, pady=(0, 6), after=after_widget)
+        else:
+            self.pack(fill="x", padx=35, pady=(0, 6))
 
     def _fetch_and_render_thumb(self, url: str):
         try:
