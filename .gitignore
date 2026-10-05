@@ -1,11 +1,32 @@
+# Entornos virtuales
 .venv/
+venv/
+env/
+
+# Archivos compilados y temporales de Python
 __pycache__/
 *.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Artefactos de compilación local (PyInstaller e Inno Setup)
 build/
 dist/
+installer/
+*.spec
+
+# Binarios pesados locales
 ffmpeg/
+
+# Logs y volcados de depuración
 *.log
-.pytest_cache/
+*.tmp
+
+# Configuraciones de IDEs
 .idea/
 .vscode/
-*.spec
+*.swp
+*.swo
+.DS_Store

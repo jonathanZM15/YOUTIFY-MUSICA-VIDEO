@@ -2,6 +2,8 @@ name: Build and publish Windows installer
 
 on:
   push:
+    branches:
+      - main
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -27,7 +29,7 @@ jobs:
           pip install -r requirements.txt pyinstaller
 
       - name: Build executable
-        run: pyinstaller --noconsole --onefile --clean --icon=icon.ico --name Youtify app.py
+        run: pyinstaller --noconsole --onefile --clean --icon=icon.ico --name Youtify main.py
 
       - name: Download and bundle FFmpeg
         run: |
@@ -50,9 +52,19 @@ jobs:
           name: Youtify-Windows
           path: installer/Youtify-Setup.exe
 
-      - name: Publish GitHub Release
+      - name: Publish GitHub Release (Tag)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: installer/Youtify-Setup.exe
+
+      - name: Update Latest Release (Push to main)
+        if: github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: "Youtify Latest Build"
+          body: "Última versión compilada automáticamente tras commit en main."
+          files: installer/Youtify-Setup.exe
+          prerelease: false
