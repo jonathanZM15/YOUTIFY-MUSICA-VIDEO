@@ -1,59 +1,49 @@
 class Colors:
-    """Paleta de diseño moderna, pulida y con jerarquía visual refinada (Light, Dark)."""
+    """Paleta minimalista premium inspirada en Spotify y Linear (Deep Obsidian / Zinc)."""
 
-    # Fondos de ventana y capas
-    APP_BG = ("#f1f5f9", "#0b0f19")
-    HEADER_BG = ("#ffffff", "#0f172a")
-    HEADER_BORDER = ("#e2e8f0", "#1e293b")
-    CARD_BG = ("#ffffff", "#111827")
-    CONSOLE_BG = ("#f8fafc", "#090d16")
-    CONSOLE_CONTAINER = ("#ffffff", "#0d1322")
+    # Fondos (Dark: Negro obsidiana puro y refinado / Light: Blanco nieve cálido)
+    APP_BG = ("#fafafa", "#090a0f")
+    CARD_BG = ("#ffffff", "#12131a")
+    CARD_HOVER = ("#f4f4f5", "#181922")
+    INPUT_BG = ("#f4f4f5", "#181924")
+    CONSOLE_BG = ("#f4f4f5", "#0d0e14")
 
-    # Bordes elegantes y sutiles
-    BORDER_CARD = ("#e2e8f0", "#1f293d")
-    BORDER_INPUT = ("#cbd5e1", "#334155")
-    BORDER_BUTTON = ("#cbd5e1", "#334155")
+    # Bordes sutiles de alta fidelidad
+    BORDER = ("#e4e4e7", "#22232e")
+    BORDER_INPUT = ("#d4d4d8", "#2a2c3a")
+    BORDER_FOCUS = ("#0284c7", "#38bdf8")
 
-    # Acentos y Botones Principales (Gama Azul Eléctrico / Cyan Moderno)
-    PRIMARY = ("#0284c7", "#0284c7")
-    PRIMARY_HOVER = ("#0369a1", "#0369a1")
-    PRIMARY_TEXT = "#ffffff"
+    # Acento primario unificado (Cian Eléctrico / Azul Spotify/Linear)
+    PRIMARY = ("#0284c7", "#0ea5e9")
+    PRIMARY_HOVER = ("#0369a1", "#0284c7")
 
-    # Botones Secundarios
-    SECONDARY = ("#f1f5f9", "#1e293b")
-    SECONDARY_HOVER = ("#e2e8f0", "#334155")
-    SECONDARY_BORDER = ("#cbd5e1", "#334155")
+    # Botones secundarios / de acción sutil
+    BTN_SECONDARY_BG = ("#f4f4f5", "#1c1d28")
+    BTN_SECONDARY_HOVER = ("#e4e4e7", "#272937")
+    BTN_SECONDARY_TEXT = ("#18181b", "#f4f4f5")
+    BTN_SECONDARY_BORDER = ("#e4e4e7", "#272938")
 
-    # Botón de Añadir a Cola (Acento Violeta / Indigo sutil)
-    ACCENT_QUEUE = ("#6366f1", "#4f46e5")
-    ACCENT_QUEUE_HOVER = ("#4f46e5", "#4338ca")
-
-    # Tipografía y Textos
+    # Tipografía cuidada
     TEXT_BRAND = ("#0284c7", "#38bdf8")
-    TEXT_TITLE = ("#0f172a", "#f8fafc")
-    TEXT_MAIN = ("#1e293b", "#f1f5f9")
-    TEXT_MUTED = ("#64748b", "#94a3b8")
-    TEXT_CONSOLE = ("#334155", "#cbd5e1")
+    TEXT_PRIMARY = ("#09090b", "#f4f4f5")
+    TEXT_SECONDARY = ("#71717a", "#a1a1aa")
+    TEXT_MUTED = ("#a1a1aa", "#71717a")
+    TEXT_CONSOLE = ("#27272a", "#d4d4d8")
 
-    # Estados y Badges Dinámicos
-    STATUS_IDLE_FG = ("#f1f5f9", "#1e293b")
-    STATUS_IDLE_TEXT = ("#64748b", "#94a3b8")
-    STATUS_IDLE_BORDER = ("#e2e8f0", "#334155")
+    # Estados / Badges Minimalistas
+    STATUS_IDLE_FG = ("transparent", "transparent")
+    STATUS_IDLE_TEXT = ("#71717a", "#a1a1aa")
 
     STATUS_ACTIVE_FG = ("#e0f2fe", "#082f49")
     STATUS_ACTIVE_TEXT = ("#0284c7", "#38bdf8")
-    STATUS_ACTIVE_BORDER = ("#bae6fd", "#0c4a6e")
 
     STATUS_CONVERT_FG = ("#fef3c7", "#451a03")
-    STATUS_CONVERT_TEXT = ("#b45309", "#fbbf24")
-    STATUS_CONVERT_BORDER = ("#fde68a", "#78350f")
+    STATUS_CONVERT_TEXT = ("#d97706", "#fbbf24")
 
     STATUS_SUCCESS_FG = ("#dcfce7", "#052e16")
-    STATUS_SUCCESS_TEXT = ("#15803d", "#4ade80")
-    STATUS_SUCCESS_BORDER = ("#bbf7d0", "#14532d")
+    STATUS_SUCCESS_TEXT = ("#16a34a", "#4ade80")
     PROGRESS_SUCCESS = ("#16a34a", "#22c55e")
 
     STATUS_ERROR_FG = ("#fee2e2", "#450a0a")
-    STATUS_ERROR_TEXT = ("#b91c1c", "#f87171")
-    STATUS_ERROR_BORDER = ("#fecaca", "#7f1d1d")
+    STATUS_ERROR_TEXT = ("#dc2626", "#f87171")
     PROGRESS_ERROR = ("#dc2626", "#ef4444")

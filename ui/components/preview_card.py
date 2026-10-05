@@ -8,31 +8,30 @@ from ui.theme import Colors
 
 
 class PreviewCard(ctk.CTkFrame):
-    """Tarjeta interactiva elegante que muestra miniatura en alta calidad, título y duración."""
+    """Tarjeta interactiva minimalista que muestra miniatura, título y canal del video."""
 
     def __init__(self, parent):
         super().__init__(
             parent,
             fg_color=Colors.CARD_BG,
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
-            border_color=Colors.BORDER_CARD,
+            border_color=Colors.BORDER,
         )
         self._thumb_img = None
         self._build_ui()
 
     def _build_ui(self):
-        # Contenedor interior con padding consistente
         self.inner = ctk.CTkFrame(self, fg_color="transparent")
         self.inner.pack(fill="x", padx=16, pady=10)
 
-        # Miniatura (Placeholder por defecto con bordes redondeados y fondo sutil)
+        # Miniatura con fondo sutil
         self.thumb_container = ctk.CTkFrame(
             self.inner,
-            fg_color=Colors.CONSOLE_BG,
+            fg_color=Colors.INPUT_BG,
             corner_radius=8,
-            width=100,
-            height=58,
+            width=96,
+            height=54,
         )
         self.thumb_container.pack(side="left", padx=(0, 14))
         self.thumb_container.pack_propagate(False)
@@ -40,11 +39,11 @@ class PreviewCard(ctk.CTkFrame):
         self.thumb_label = ctk.CTkLabel(
             self.thumb_container,
             text="🎬",
-            font=("Segoe UI", 20),
+            font=("Segoe UI", 18),
         )
         self.thumb_label.pack(expand=True, fill="both")
 
-        # Información textual (Título + Badges de canal y duración)
+        # Info textual
         info_frame = ctk.CTkFrame(self.inner, fg_color="transparent")
         info_frame.pack(side="left", fill="both", expand=True)
 
@@ -52,12 +51,12 @@ class PreviewCard(ctk.CTkFrame):
             info_frame,
             text="",
             font=("Segoe UI", 12, "bold"),
-            text_color=Colors.TEXT_TITLE,
+            text_color=Colors.TEXT_PRIMARY,
             anchor="w",
-            wraplength=430,
+            wraplength=440,
             justify="left",
         )
-        self.title_label.pack(fill="x", pady=(1, 3))
+        self.title_label.pack(fill="x", pady=(2, 3))
 
         badges_row = ctk.CTkFrame(info_frame, fg_color="transparent")
         badges_row.pack(anchor="w")
@@ -66,19 +65,19 @@ class PreviewCard(ctk.CTkFrame):
             badges_row,
             text="",
             font=("Segoe UI", 11),
-            text_color=Colors.TEXT_MUTED,
+            text_color=Colors.TEXT_SECONDARY,
         )
-        self.channel_badge.pack(side="left", padx=(0, 12))
+        self.channel_badge.pack(side="left", padx=(0, 10))
 
         self.duration_badge = ctk.CTkLabel(
             badges_row,
             text="",
-            font=("Segoe UI", 11, "bold"),
+            font=("Segoe UI", 10, "bold"),
             text_color=Colors.TEXT_BRAND,
-            fg_color=Colors.SECONDARY,
-            corner_radius=6,
-            padx=8,
-            pady=2,
+            fg_color=Colors.INPUT_BG,
+            corner_radius=5,
+            padx=7,
+            pady=1,
         )
         self.duration_badge.pack(side="left")
 
@@ -99,9 +98,9 @@ class PreviewCard(ctk.CTkFrame):
             threading.Thread(target=self._fetch_and_render_thumb, args=(thumbnail_url,), daemon=True).start()
 
         if after_widget:
-            self.pack(fill="x", padx=30, pady=(0, 6), after=after_widget)
+            self.pack(fill="x", padx=36, pady=(0, 10), after=after_widget)
         else:
-            self.pack(fill="x", padx=30, pady=(0, 6))
+            self.pack(fill="x", padx=36, pady=(0, 10))
 
     def _fetch_and_render_thumb(self, url: str):
         try:
@@ -109,8 +108,8 @@ class PreviewCard(ctk.CTkFrame):
             with urllib.request.urlopen(req, timeout=5) as resp:
                 data = resp.read()
             raw_img = Image.open(io.BytesIO(data))
-            raw_img = raw_img.convert("RGBA").resize((100, 58), Image.LANCZOS)
-            self._thumb_img = ctk.CTkImage(light_image=raw_img, dark_image=raw_img, size=(100, 58))
+            raw_img = raw_img.convert("RGBA").resize((96, 54), Image.LANCZOS)
+            self._thumb_img = ctk.CTkImage(light_image=raw_img, dark_image=raw_img, size=(96, 54))
             self.after(0, lambda: self.thumb_label.configure(image=self._thumb_img, text=""))
         except Exception:
             pass

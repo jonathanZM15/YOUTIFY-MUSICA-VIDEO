@@ -4,7 +4,7 @@ from ui.theme import Colors
 
 
 class DownloadCard(ctk.CTkFrame):
-    """Tarjeta contenedora de campos de entrada, formato y selección de calidad con diseño pulido."""
+    """Tarjeta de entrada moderna y minimalista con controles estilizados."""
 
     def __init__(
         self,
@@ -15,94 +15,91 @@ class DownloadCard(ctk.CTkFrame):
         super().__init__(
             parent,
             fg_color=Colors.CARD_BG,
-            corner_radius=14,
+            corner_radius=12,
             border_width=1,
-            border_color=Colors.BORDER_CARD,
+            border_color=Colors.BORDER,
         )
-        self.pack(fill="x", padx=30, pady=(12, 6))
+        self.pack(fill="x", padx=36, pady=(0, 10))
         self.on_url_modified = on_url_modified
 
-        # ── 1. Etiqueta superior del campo ──
-        label_row = ctk.CTkFrame(self, fg_color="transparent")
-        label_row.pack(fill="x", padx=22, pady=(16, 6))
-
-        ctk.CTkLabel(
-            label_row,
-            text="ENLACE DE YOUTUBE O PLAYLIST",
-            font=("Segoe UI", 11, "bold"),
-            text_color=Colors.TEXT_MUTED,
-        ).pack(side="left")
-
-        # ── 2. Campo de URL moderno ──
+        # ── Campo de URL con diseño minimalista ──
         self.url_var = ctk.StringVar()
         self.url_var.trace_add("write", self._on_trace_url)
 
-        input_frame = ctk.CTkFrame(self, fg_color="transparent")
-        input_frame.pack(fill="x", padx=22, pady=(0, 14))
-
-        self.url_entry = ctk.CTkEntry(
-            input_frame,
-            textvariable=self.url_var,
-            placeholder_text="Pega aquí el enlace: https://www.youtube.com/watch?v=...",
-            height=42,
-            font=("Segoe UI", 13),
-            corner_radius=10,
-            border_width=1,
-            border_color=Colors.BORDER_INPUT,
-            fg_color=("white", "#090d16"),
-        )
-        self.url_entry.pack(fill="x")
-
-        # ── 3. Fila de selectores (Formato y Calidad) con tarjetas visuales ──
-        options_row = ctk.CTkFrame(self, fg_color="transparent")
-        options_row.pack(fill="x", padx=22, pady=(0, 16))
-
-        # Grupo Formato
-        fmt_group = ctk.CTkFrame(options_row, fg_color="transparent")
-        fmt_group.pack(side="left", padx=(0, 24))
+        container = ctk.CTkFrame(self, fg_color="transparent")
+        container.pack(fill="x", padx=20, pady=18)
 
         ctk.CTkLabel(
-            fmt_group,
-            text="Formato",
-            font=("Segoe UI", 12, "bold"),
-            text_color=Colors.TEXT_MAIN,
-        ).pack(side="left", padx=(0, 8))
+            container,
+            text="ENLACE DE YOUTUBE",
+            font=("Segoe UI", 10, "bold"),
+            text_color=Colors.TEXT_MUTED,
+        ).pack(anchor="w", pady=(0, 6))
 
-        self.format_menu = ctk.CTkComboBox(
-            fmt_group,
-            values=["MP3 (audio)", "MP4 (video)"],
-            state="readonly",
-            width=165,
-            height=34,
+        self.url_entry = ctk.CTkEntry(
+            container,
+            textvariable=self.url_var,
+            placeholder_text="Pega un enlace: https://www.youtube.com/watch?v=...",
+            height=42,
+            font=("Segoe UI", 13),
             corner_radius=8,
             border_width=1,
             border_color=Colors.BORDER_INPUT,
+            fg_color=Colors.INPUT_BG,
+            text_color=Colors.TEXT_PRIMARY,
+        )
+        self.url_entry.pack(fill="x", pady=(0, 14))
+
+        # ── Selectores alineados horizontalmente ──
+        options_row = ctk.CTkFrame(container, fg_color="transparent")
+        options_row.pack(fill="x")
+
+        # Formato
+        ctk.CTkLabel(
+            options_row,
+            text="Formato",
+            font=("Segoe UI", 12),
+            text_color=Colors.TEXT_SECONDARY,
+        ).pack(side="left", padx=(0, 8))
+
+        self.format_menu = ctk.CTkComboBox(
+            options_row,
+            values=["MP3 (audio)", "MP4 (video)"],
+            state="readonly",
+            width=160,
+            height=32,
+            corner_radius=8,
+            border_width=1,
+            border_color=Colors.BORDER_INPUT,
+            fg_color=Colors.INPUT_BG,
+            button_color=Colors.BORDER_INPUT,
+            button_hover_color=Colors.BORDER,
             font=("Segoe UI", 12),
             command=on_format_change,
         )
         self.format_menu.set("MP3 (audio)")
-        self.format_menu.pack(side="left")
+        self.format_menu.pack(side="left", padx=(0, 24))
 
-        # Grupo Calidad
-        qual_group = ctk.CTkFrame(options_row, fg_color="transparent")
-        qual_group.pack(side="left")
-
+        # Calidad
         ctk.CTkLabel(
-            qual_group,
+            options_row,
             text="Calidad",
-            font=("Segoe UI", 12, "bold"),
-            text_color=Colors.TEXT_MAIN,
+            font=("Segoe UI", 12),
+            text_color=Colors.TEXT_SECONDARY,
         ).pack(side="left", padx=(0, 8))
 
         self.quality_menu = ctk.CTkComboBox(
-            qual_group,
+            options_row,
             values=["Máxima", "1080p", "720p", "480p", "360p"],
             state="readonly",
             width=130,
-            height=34,
+            height=32,
             corner_radius=8,
             border_width=1,
             border_color=Colors.BORDER_INPUT,
+            fg_color=Colors.INPUT_BG,
+            button_color=Colors.BORDER_INPUT,
+            button_hover_color=Colors.BORDER,
             font=("Segoe UI", 12),
         )
         self.quality_menu.set("Máxima")

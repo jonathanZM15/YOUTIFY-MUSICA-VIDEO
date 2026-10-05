@@ -7,82 +7,57 @@ _ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 
 
 class ConsoleView(ctk.CTkFrame):
-    """Consola moderna estilo terminal macOS/VS Code con ventana de terminal integrada."""
+    """Consola moderna minimalista con micro-header y caja de texto limpia."""
 
     def __init__(self, parent):
         super().__init__(
             parent,
-            fg_color=Colors.CONSOLE_CONTAINER,
-            corner_radius=14,
+            fg_color=Colors.CARD_BG,
+            corner_radius=12,
             border_width=1,
-            border_color=Colors.BORDER_CARD,
+            border_color=Colors.BORDER,
         )
-        self.pack(fill="x", padx=30, pady=(4, 16))
+        self.pack(fill="x", padx=36, pady=(6, 20))
         self._line_count = 0
 
-        # Barra superior de la terminal
-        top_bar = ctk.CTkFrame(self, fg_color="transparent", height=28)
-        top_bar.pack(fill="x", padx=16, pady=(10, 4))
-
-        # Indicador de estado (puntos de terminal de colores estilo Mac/Terminal)
-        dots_box = ctk.CTkFrame(top_bar, fg_color="transparent")
-        dots_box.pack(side="left")
+        # Barra superior sutil
+        top_bar = ctk.CTkFrame(self, fg_color="transparent", height=24)
+        top_bar.pack(fill="x", padx=14, pady=(10, 4))
 
         ctk.CTkLabel(
-            dots_box,
-            text="●",
-            font=("Segoe UI", 12),
-            text_color="#ef4444",
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkLabel(
-            dots_box,
-            text="●",
-            font=("Segoe UI", 12),
-            text_color="#eab308",
-        ).pack(side="left", padx=(0, 4))
-        ctk.CTkLabel(
-            dots_box,
-            text="●",
-            font=("Segoe UI", 12),
-            text_color="#22c55e",
-        ).pack(side="left", padx=(0, 10))
-
-        ctk.CTkLabel(
-            dots_box,
-            text="TERMINAL DE REGISTRO",
+            top_bar,
+            text="REGISTRO DE ACTIVIDAD",
             font=("Segoe UI", 10, "bold"),
             text_color=Colors.TEXT_MUTED,
         ).pack(side="left")
 
         clear_btn = ctk.CTkButton(
             top_bar,
-            text="Limpiar consola",
-            width=85,
-            height=22,
-            font=("Segoe UI", 10, "bold"),
-            fg_color=Colors.SECONDARY,
-            hover_color=Colors.SECONDARY_HOVER,
-            text_color=Colors.TEXT_MUTED,
-            corner_radius=6,
+            text="Limpiar",
+            width=60,
+            height=20,
+            font=("Segoe UI", 10),
+            fg_color="transparent",
+            hover_color=Colors.INPUT_BG,
+            text_color=Colors.TEXT_SECONDARY,
+            corner_radius=5,
             command=self.clear_logs,
         )
         clear_btn.pack(side="right")
 
-        # Área de texto terminal
-        text_wrapper = ctk.CTkFrame(self, fg_color=Colors.CONSOLE_BG, corner_radius=10)
-        text_wrapper.pack(fill="x", padx=12, pady=(0, 10))
-
+        # Área de texto
         self.textbox = ctk.CTkTextbox(
-            text_wrapper,
-            height=120,
+            self,
+            height=110,
             font=("Consolas", 11),
-            fg_color="transparent",
+            fg_color=Colors.CONSOLE_BG,
             text_color=Colors.TEXT_CONSOLE,
             border_width=0,
+            corner_radius=8,
             wrap="word",
         )
-        self.textbox.pack(fill="both", expand=True, padx=8, pady=4)
-        self.textbox.insert("0.1", "[*] Sistema listo. Pega un enlace de YouTube para comenzar.\n")
+        self.textbox.pack(fill="both", expand=True, padx=12, pady=(0, 12))
+        self.textbox.insert("0.1", "[*] Listo para descargar. Pega un enlace de YouTube arriba.\n")
         self.textbox.configure(state="disabled")
 
     def append_log(self, message: str) -> None:
