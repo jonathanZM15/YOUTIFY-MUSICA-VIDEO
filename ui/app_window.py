@@ -2,7 +2,6 @@ import os
 import threading
 from pathlib import Path
 from queue import Queue
-from tkinter import messagebox
 import customtkinter as ctk
 
 from config.settings import (
@@ -15,7 +14,14 @@ from core.validator import SecurityValidator
 from core.downloader import DownloadEngine
 from core.updater import Updater
 from ui.theme import Colors
-from ui.components import Header, DownloadCard, PreviewCard, ConsoleView, ProgressBarWidget
+from ui.components import (
+    Header,
+    DownloadCard,
+    PreviewCard,
+    ConsoleView,
+    ProgressBarWidget,
+    ModalDialog,
+)
 
 
 class AppWindow(ctk.CTk):
@@ -166,9 +172,10 @@ class AppWindow(ctk.CTk):
 
     def _on_window_closing(self) -> None:
         if self.is_downloading or not self.download_queue.empty():
-            if not messagebox.askyesno(
-                "Descargas en curso",
-                "Hay descargas activas o en cola.\n¿Seguro que deseas salir y cancelarlas?",
+            if not ModalDialog.ask_confirm(
+                self,
+                title="Descargas en curso",
+                message="Hay descargas activas o en cola de espera.\n¿Seguro que deseas salir y cancelarlas?",
             ):
                 return
         self.destroy()
@@ -252,13 +259,17 @@ class AppWindow(ctk.CTk):
 
     def _validate_url(self, url: str) -> bool:
         if not url:
-            messagebox.showwarning("Enlace requerido", "Por favor pega un enlace de YouTube.")
+            ModalDialog.show_warning(
+                self,
+                title="Enlace requerido",
+                message="Por favor ingresa o pega un enlace de YouTube antes de continuar.",
+            )
             return False
         if not SecurityValidator.is_valid_youtube_url(url):
-            messagebox.showerror(
-                "Enlace no válido",
-                "Ingresa un enlace válido de YouTube o YouTube Music.\n\n"
-                "Ejemplo:\nhttps://www.youtube.com/watch?v=...",
+            ModalDialog.show_error(
+                self,
+                title="Enlace no válido",
+                message="Ingresa un enlace verificado de YouTube o YouTube Music.\n\nEjemplo:\nhttps://www.youtube.com/watch?v=...",
             )
             return False
         return True
@@ -300,7 +311,7 @@ class AppWindow(ctk.CTk):
             if "403" in err_msg or "Forbidden" in err_msg:
                 err_msg += "\n\nYouTube solicitó verificación antibot. Node.js LTS recomendado."
             self.console_view.append_log(f"[ERROR] {err_msg}")
-            self.after(0, lambda: messagebox.showerror("Error de descarga", err_msg))
+            self.after(0, lambda: ModalDialog.show_error(self, title="Error de descarga", message=err_msg))
             self.after(0, self._process_next_in_queue)
 
     def _on_single_download_success(self) -> None:
