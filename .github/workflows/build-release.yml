@@ -2,8 +2,6 @@ name: Build and publish Windows installer
 
 on:
   push:
-    branches:
-      - main
     tags:
       - "v*.*.*"
   workflow_dispatch:
@@ -52,19 +50,9 @@ jobs:
           name: Youtify-Windows
           path: installer/Youtify-Setup.exe
 
-      - name: Publish GitHub Release (Tag)
+      - name: Publish GitHub Release (v*.*.*)
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: installer/Youtify-Setup.exe
-
-      - name: Update Latest Release (Push to main)
-        if: github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: latest
-          name: "Youtify Latest Build"
-          body: "Última versión compilada automáticamente tras commit en main."
-          files: installer/Youtify-Setup.exe
-          prerelease: false

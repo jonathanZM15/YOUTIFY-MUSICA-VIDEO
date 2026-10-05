@@ -16,7 +16,7 @@ from core.ffmpeg_manager import FFmpegManager
 
 
 class DownloadEngine:
-    """Motor de descarga y conversión multi-hilo con optimizaciones de hardware y RAM."""
+    """Motor de descarga y conversión multi-hilo con optimizaciones de hardware, RAM y metadatos ID3."""
 
     def __init__(
         self,
@@ -29,6 +29,49 @@ class DownloadEngine:
         self.on_status = on_status
         self._last_progress_time = 0.0
 
+    @staticmethod
+    def extract_metadata_fast(url: str) -> Optional[dict]:
+        """Extrae metadatos y miniatura de forma ultrarrápida sin descargar el archivo."""
+        from yt_dlp import YoutubeDL
+        opts = {
+            "extract_flat": False,
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 8,
+        }
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return None
+                # Si es una playlist, obtener el primer video o datos generales
+                entries = info.get("entries")
+                if entries:
+                    first = list(entries)[0] if isinstance(entries, (list, tuple)) else next(iter(entries), None)
+                    return {
+                        "title": info.get("title") or (first.get("title") if first else "Playlist"),
+                        "channel": info.get("uploader") or info.get("channel") or (first.get("uploader") if first else "Desconocido"),
+                        "duration": info.get("playlist_count", 0),
+                        "thumbnail": info.get("thumbnail") or (first.get("thumbnail") if first else None),
+                        "is_playlist": True,
+                    }
+
+                duration_secs = info.get("duration") or 0
+                minutes = int(duration_secs // 60)
+                seconds = int(duration_secs % 60)
+                dur_str = f"{minutes}:{seconds:02d}"
+
+                return {
+                    "title": info.get("title", "Video de YouTube"),
+                    "channel": info.get("uploader") or info.get("channel") or "Desconocido",
+                    "duration": dur_str,
+                    "thumbnail": info.get("thumbnail"),
+                    "is_playlist": False,
+                }
+        except Exception:
+            return None
+
     def execute_download(
         self,
         url: str,
@@ -36,7 +79,6 @@ class DownloadEngine:
         quality: str,
         destination_dir: Path,
     ) -> None:
-        """Descarga y convierte el medio especificado de forma eficiente y segura."""
         destination_dir.mkdir(parents=True, exist_ok=True)
         is_audio = format_type.startswith("MP3")
 
@@ -54,14 +96,11 @@ class DownloadEngine:
         if self.on_status:
             self.on_status("connecting", "Conectando con servidores...")
 
-        # Lazy loading de yt-dlp para ahorrar RAM hasta el momento de uso
         from yt_dlp import YoutubeDL
-
         try:
             with YoutubeDL(options) as downloader:
                 downloader.download([url])
         finally:
-            # Recolector de basura forzado para liberar buffers en memoria RAM
             gc.collect()
 
     def _progress_hook(self, data: dict) -> None:
@@ -91,9 +130,9 @@ class DownloadEngine:
                 self.on_progress(numeric_progress, pct_str, speed_str, eta_str)
 
         elif status == "finished":
-            self._log("[*] Paquete de video/audio recibido; ejecutando conversión con FFmpeg...")
+            self._log("[*] Conversión y etiquetado ID3 de metadatos con FFmpeg...")
             if self.on_status:
-                self.on_status("converting", "Ensamblando y convirtiendo...")
+                self.on_status("converting", "Incrustando portada y metadatos...")
 
     def _build_yt_dlp_options(
         self,
@@ -124,9 +163,10 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "noprogress": False,
+            # Inyección de metadatos ID3 completos
+            "writethumbnail": True,
         }
 
-        # Soporte para Node.js si está presente para resolver desafíos de YouTube
         if shutil.which("node"):
             options["js_runtimes"] = {"node": {}}
             options["remote_components"] = {"ejs": ["github"]}
@@ -134,11 +174,22 @@ class DownloadEngine:
         if is_audio:
             options.update({
                 "format": "bestaudio/best",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "0",
-                }],
+                "postprocessors": [
+                    {
+                        "key": "FFmpegExtractAudio",
+                        "preferredcodec": "mp3",
+                        "preferredquality": "0",
+                    },
+                    {
+                        # Inyectar tags ID3 (artista, álbum, título, fecha)
+                        "key": "FFmpegMetadata",
+                        "add_metadata": True,
+                    },
+                    {
+                        # Incrustar portada oficial directamente en el MP3
+                        "key": "EmbedThumbnail",
+                    },
+                ],
             })
         else:
             height = QUALITY_MAP.get(quality)
@@ -149,6 +200,12 @@ class DownloadEngine:
             options.update({
                 "format": selector,
                 "merge_output_format": "mp4",
+                "postprocessors": [
+                    {
+                        "key": "FFmpegMetadata",
+                        "add_metadata": True,
+                    },
+                ],
             })
 
         return options
