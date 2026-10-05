@@ -23,9 +23,12 @@ class AppWindow(ctk.CTk):
 
     def __init__(self):
         super().__init__()
-        self.title(f"{APP_NAME} | Descargas rápidas")
-        self.geometry("700x750")
+        self.title(f"{APP_NAME} — Descargas de Alta Fidelidad")
+        self.geometry("720x760")
         self.resizable(False, False)
+
+        # Color de fondo de ventana general coherente
+        self.configure(fg_color=Colors.APP_BG)
 
         # Sistema de Cola Asíncrona (Download Queue)
         self.download_queue = Queue()
@@ -63,77 +66,73 @@ class AppWindow(ctk.CTk):
             pass
 
     def _build_layout(self) -> None:
-        # 1. Cabecera
+        # 1. Cabecera con branding moderno y versión
         self.header = Header(self, icon_path=ICON_PATH)
 
-        # 2. Separador visual
-        ctk.CTkFrame(
-            self,
-            height=2,
-            fg_color=Colors.SEPARATOR,
-            corner_radius=0,
-        ).pack(fill="x", padx=40, pady=(0, 6))
-
-        # 3. Tarjeta de controles (URL + Formatos) con listener de previsualización
+        # 2. Tarjeta principal de formulario (URL + Formatos)
         self.download_card = DownloadCard(
             self,
             on_format_change=self._on_format_changed,
             on_url_modified=self._on_url_modified,
         )
 
-        # 4. Tarjeta de previsualización del video (Miniatura + Título)
+        # 3. Tarjeta de previsualización (se ancla dinámicamente bajo download_card)
         self.preview_card = PreviewCard(self)
 
-        # 5. Destino y botones de acción
+        # 4. Destino y barra de acciones principales
+        action_bar = ctk.CTkFrame(self, fg_color="transparent")
+        action_bar.pack(fill="x", padx=30, pady=(6, 4))
+
+        # Indicador sutil de destino a la izquierda
         self.destination_label = ctk.CTkLabel(
-            self,
+            action_bar,
             text="",
             text_color=Colors.TEXT_MUTED,
             font=("Segoe UI", 11),
+            anchor="w",
         )
-        self.destination_label.pack(pady=(4, 2))
+        self.destination_label.pack(side="left")
 
-        buttons_container = ctk.CTkFrame(self, fg_color="transparent")
-        buttons_container.pack(pady=(0, 4))
-
+        # Botón sutil de abrir carpeta
         self.open_folder_btn = ctk.CTkButton(
-            buttons_container,
-            text="📁  Abrir carpeta",
-            width=150,
-            height=38,
-            font=("Segoe UI", 12, "bold"),
-            fg_color=Colors.SECONDARY,
-            text_color=Colors.TEXT_MAIN,
-            hover_color=Colors.SECONDARY_HOVER,
+            action_bar,
+            text="📁 Abrir carpeta",
+            width=120,
+            height=30,
+            font=("Segoe UI", 11, "bold"),
+            fg_color="transparent",
+            text_color=Colors.TEXT_MUTED,
+            hover_color=Colors.SECONDARY,
             border_width=1,
             border_color=Colors.BORDER_BUTTON,
-            corner_radius=10,
+            corner_radius=8,
             command=self._open_destination_folder,
         )
-        self.open_folder_btn.pack(side="left", padx=(0, 8))
+        self.open_folder_btn.pack(side="right")
 
-        # Botón para añadir a cola
+        # 5. Barra de botones primarios con jerarquía visual
+        buttons_container = ctk.CTkFrame(self, fg_color="transparent")
+        buttons_container.pack(fill="x", padx=30, pady=(4, 6))
+
+        # Botón secundario: Añadir a cola (color indigo con estilo moderno)
         self.enqueue_btn = ctk.CTkButton(
             buttons_container,
-            text="➕  Añadir a cola",
-            width=140,
-            height=38,
-            font=("Segoe UI", 12, "bold"),
-            fg_color=Colors.SECONDARY,
-            text_color=Colors.TEXT_MAIN,
-            hover_color=Colors.SECONDARY_HOVER,
-            border_width=1,
-            border_color=Colors.BORDER_BUTTON,
+            text="➕  Añadir a la cola",
+            height=44,
+            font=("Segoe UI", 13, "bold"),
+            fg_color=Colors.ACCENT_QUEUE,
+            text_color="white",
+            hover_color=Colors.ACCENT_QUEUE_HOVER,
             corner_radius=10,
             command=self.enqueue_download,
         )
-        self.enqueue_btn.pack(side="left", padx=(0, 8))
+        self.enqueue_btn.pack(side="left", fill="x", expand=True, padx=(0, 10))
 
+        # Botón principal destacado: Descargar ahora (azul llamativo)
         self.download_btn = ctk.CTkButton(
             buttons_container,
-            text="⬇  Descargar ahora",
-            width=190,
-            height=42,
+            text="⚡  Descargar ahora",
+            height=44,
             font=("Segoe UI", 13, "bold"),
             fg_color=Colors.PRIMARY,
             text_color="white",
@@ -141,12 +140,12 @@ class AppWindow(ctk.CTk):
             corner_radius=10,
             command=self.start_download_task,
         )
-        self.download_btn.pack(side="left")
+        self.download_btn.pack(side="left", fill="x", expand=True)
 
-        # 6. Barra de progreso y badges
+        # 6. Barra de progreso y badges reactivos
         self.progress_widget = ProgressBarWidget(self)
 
-        # 7. Terminal de logs
+        # 7. Terminal de logs con estilo developer
         self.console_view = ConsoleView(self)
 
         # Inicializar destino por defecto
@@ -158,7 +157,7 @@ class AppWindow(ctk.CTk):
 
     def _on_format_changed(self, selection: str) -> None:
         dest = self._get_current_destination()
-        self.destination_label.configure(text=f"📂 Guardando en: {dest}")
+        self.destination_label.configure(text=f"📂 Guardando en: {dest.name}")
 
     def _open_destination_folder(self) -> None:
         dest = self._get_current_destination()
@@ -190,7 +189,6 @@ class AppWindow(ctk.CTk):
 
     def _inspect_url_async(self, target_url: str) -> None:
         def _task():
-            # Si el usuario ya borró o descargó el enlace, abortar
             current_url = self.download_card.get_url()
             if current_url != target_url:
                 self.after(0, self.preview_card.hide_preview)
@@ -198,7 +196,6 @@ class AppWindow(ctk.CTk):
 
             meta = DownloadEngine.extract_metadata_fast(target_url)
 
-            # Verificar nuevamente en el hilo principal antes de mostrar
             def _apply_meta():
                 if self.download_card.get_url() == target_url and meta:
                     self.preview_card.show_preview(
@@ -238,7 +235,6 @@ class AppWindow(ctk.CTk):
 
     def start_download_task(self) -> None:
         if self.is_downloading:
-            # Si ya hay una activa, lo encolamos directamente
             self.enqueue_download()
             return
 
@@ -271,7 +267,8 @@ class AppWindow(ctk.CTk):
     def _process_next_in_queue(self) -> None:
         if self.download_queue.empty():
             self.is_downloading = False
-            self.download_btn.configure(state="normal", text="⬇  Descargar ahora")
+            self.download_btn.configure(state="normal", text="⚡  Descargar ahora")
+            self.enqueue_btn.configure(state="normal")
             self.progress_widget.set_completed()
             return
 
@@ -279,7 +276,7 @@ class AppWindow(ctk.CTk):
         url, fmt, quality, destination = self.download_queue.get()
         self._current_task = url
 
-        self.download_btn.configure(state="normal", text="⬇  Descargando...")
+        self.download_btn.configure(state="normal", text="⏳ Descargando...")
         self.progress_widget.set_progress(0)
         self.progress_widget.set_active_download("0%", "Iniciando...")
         self.console_view.append_log(f"─── Procesando: {fmt} (Restantes en cola: {self.download_queue.qsize()}) ───")
