@@ -15,19 +15,19 @@ OutputBaseFilename=Youtify-Setup
 Compression=lzma2/ultra64
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=icon-v105.ico
+SetupIconFile=icon.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible
 CloseApplications=yes
 
 [Files]
 Source: "dist\Youtify.exe"; DestDir: "{app}"; Flags: ignoreversion
-Source: "icon-v105.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "icon.ico"; DestDir: "{app}"; Flags: ignoreversion
 Source: "ffmpeg\*"; DestDir: "{app}\ffmpeg"; Flags: ignoreversion recursesubdirs createallsubdirs skipifsourcedoesntexist
 
 [Icons]
-Name: "{autoprograms}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon-v105.ico"; IconIndex: 0
-Name: "{autodesktop}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon-v105.ico"; IconIndex: 0
+Name: "{autoprograms}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; IconIndex: 0
+Name: "{autodesktop}\Youtify"; Filename: "{app}\{#MyAppExeName}"; IconFilename: "{app}\icon.ico"; IconIndex: 0
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "Abrir Youtify"; Flags: nowait postinstall skipifsilent

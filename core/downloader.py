@@ -100,6 +100,13 @@ class DownloadEngine:
         try:
             with YoutubeDL(options) as downloader:
                 downloader.download([url])
+            # Limpieza de imágenes sueltas que yt-dlp pueda haber dejado
+            for ext in ("*.webp", "*.jpg", "*.png", "*.jpeg"):
+                for leftover in destination_dir.glob(ext):
+                    try:
+                        leftover.unlink(missing_ok=True)
+                    except Exception:
+                        pass
         finally:
             gc.collect()
 
@@ -163,8 +170,6 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "noprogress": False,
-            # Inyección de metadatos ID3 completos
-            "writethumbnail": True,
         }
 
         if shutil.which("node"):
@@ -174,6 +179,7 @@ class DownloadEngine:
         if is_audio:
             options.update({
                 "format": "bestaudio/best",
+                "writethumbnail": True,
                 "postprocessors": [
                     {
                         "key": "FFmpegExtractAudio",
@@ -186,7 +192,7 @@ class DownloadEngine:
                         "add_metadata": True,
                     },
                     {
-                        # Incrustar portada oficial directamente en el MP3
+                        # Incrustar portada oficial directamente en el MP3 y borrar la miniatura suelta
                         "key": "EmbedThumbnail",
                     },
                 ],
