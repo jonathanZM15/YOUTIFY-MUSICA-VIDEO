@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.0.7"
+APP_VERSION = "1.0.8"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)
