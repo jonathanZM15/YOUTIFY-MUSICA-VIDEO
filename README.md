@@ -3,13 +3,12 @@
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
 ![CustomTkinter](https://img.shields.io/badge/GUI-CustomTkinter-brightgreen)
 ![yt-dlp](https://img.shields.io/badge/Powered_by-yt--dlp-red)
+![Version](https://img.shields.io/badge/Version-v1.0.7-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
-Una aplicación de escritorio moderna, ligera y open source para descargar
-música y videos de YouTube. Permite elegir entre audio MP3 y video MP4,
-descargar videos individuales o playlists completas y seleccionar la calidad
-del video desde una interfaz gráfica sencilla construida con Python y
-CustomTkinter.
+Una aplicación de escritorio moderna, ligera, elegante y open source para descargar
+música y videos de YouTube. Permite elegir entre audio MP3 de alta fidelidad y video MP4 en múltiples resoluciones,
+descargar videos individuales o playlists completas, y gestionar descargas mediante una cola asíncrona desde una interfaz gráfica construida con Python y CustomTkinter.
 
 > ⚠️ Descarga únicamente contenido que tengas derecho a guardar. El usuario es
 > responsable de respetar los derechos de autor, los términos de servicio de
@@ -19,63 +18,58 @@ CustomTkinter.
 
 ## ✨ Características principales
 
-### 🎵 Descargas de música
+### 🎵 Descargas de música (Audio MP3)
 
-* Convierte videos y playlists a audio MP3.
-* Usa la mejor calidad de audio disponible.
+* **Calidad seleccionable en kbps:** Elige entre **Máxima** (VBR sin pérdida perceptible), **320 kbps**, **256 kbps**, **192 kbps** o **128 kbps**.
+* **Incrustación de carátulas oficial:** Descarga la miniatura en alta resolución y la inserta directamente en las etiquetas del archivo MP3.
+* **Metadatos ID3 automáticos:** Inyecta artista, álbum, título y fecha para compatibilidad total con reproductores de música (Spotify, Apple Music, VLC, Windows Media).
 * Guarda automáticamente los archivos en `Descargas\Youtify\Musica_Descargada`.
 
-### 🎬 Descargas de video
+### 🎬 Descargas de video (MP4)
 
-* Descarga videos y playlists en formato MP4.
-* Calidad máxima, 1080p, 720p, 480p o 360p.
-* Si un video de una playlist no tiene la calidad seleccionada, utiliza la
-  mejor calidad disponible sin detener toda la playlist.
+* **Resoluciones disponibles:** **Máxima**, **1080p**, **720p**, **480p** o **360p**.
+* **Fusión inteligente:** Une automáticamente las pistas de video y audio de mejor calidad con FFmpeg en un único contenedor `.mp4`.
+* Si un video de una playlist no tiene la resolución seleccionada, utiliza la mejor disponible sin detener la descarga.
 * Guarda automáticamente los archivos en `Descargas\Youtify\descargas_videos`.
 
-### 🖥️ Interfaz y funcionamiento
+### 🖥️ Interfaz dinámica y moderna (Obsidian Palette)
 
-* Interfaz moderna adaptable al tema claro u oscuro del sistema.
-* Barra de progreso y mensajes de estado legibles.
-* El enlace se limpia automáticamente después de una descarga exitosa.
-* Si ocurre un error, el enlace se conserva para poder reintentarlo.
-* Rutas compatibles con ejecución como código fuente o como `.exe`.
-* Icono personalizado incluido para la ventana y el ejecutable.
+* **Selector inteligente reactivo:** El menú de calidad cambia dinámicamente según el formato: si seleccionas MP3 muestra opciones en `kbps`; si seleccionas MP4 muestra resoluciones en `p`.
+* **Previsualización automática:** Al pegar un enlace, detecta el video y carga miniatura, título, canal y duración en tiempo real.
+* **Cola de descargas asíncrona:** Añade múltiples videos o playlists a la cola para descargarlos secuencialmente sin congelar la interfaz.
+* **Consola de registro en vivo:** Barra de progreso ultra-fina, porcentaje exacto, velocidad de transferencia y tiempo estimado (ETA).
+
+### 🔔 Notificaciones de actualización integradas
+
+* Comprobación en segundo plano conectada directamente con **GitHub Releases**.
+* Si se publica una nueva versión, muestra un diálogo modal para:
+  * **Actualizar ahora:** Descarga la nueva versión directamente en tu navegador.
+  * **Recordar más tarde:** Pospone el recordatorio durante 24 horas.
+  * **No por ahora:** Cierra el aviso para la sesión actual.
 
 ### ⚙️ FFmpeg automático
 
-La aplicación descarga y configura automáticamente FFmpeg y FFprobe cuando se
-necesitan para convertir audio o unir video y audio. Los componentes se guardan
-en la carpeta local `ffmpeg`, sin requerir una instalación manual.
-
-### 🛡️ Compatibilidad con los desafíos actuales de YouTube
-
-La aplicación está preparada para utilizar Node.js junto con `yt-dlp` para
-resolver algunos desafíos JavaScript de YouTube y reducir errores HTTP 403.
-Esto no garantiza que YouTube no aplique límites temporales a una conexión o
-dirección IP.
+La aplicación detecta, descarga y configura automáticamente FFmpeg y FFprobe cuando se
+requieren para convertir audio o empaquetar video. No requiere instalación manual.
 
 ---
 
-## 📥 Descargar el instalador
+## 📥 Descargar el instalador para Windows
 
-Si solo quieres utilizar la aplicación, no necesitas instalar Python.
+No necesitas instalar Python ni herramientas adicionales para usar Youtify.
 
-### [⬇️ Descargar Youtify para Windows](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases/latest/download/Youtify-Setup.exe)
+### [⬇️ Descargar Youtify para Windows (Última versión)](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases/latest/download/Youtify-Setup.exe)
 
-También puedes consultar todas las versiones en
+También puedes consultar el historial de versiones en
 [GitHub Releases](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases).
 
 1. Descarga `Youtify-Setup.exe`.
-2. Ejecuta el instalador.
-3. Abre Youtify desde el menú Inicio o el acceso directo del escritorio.
-4. Pega un enlace de YouTube.
-5. Elige `MP3 (audio)` o `MP4 (video)`.
-6. Selecciona la calidad y pulsa **Descargar ahora**.
+2. Ejecuta el instalador e inicia Youtify.
+3. Pega un enlace de YouTube o playlist.
+4. Elige `MP3 (audio)` o `MP4 (video)`.
+5. Selecciona la calidad deseada y pulsa **Descargar ahora** o **Añadir a la cola**.
 
-> Windows Defender puede mostrar una advertencia para ejecutables sin firma
-> digital. El instalador se genera automáticamente mediante GitHub Actions a
-> partir del código fuente público de este repositorio.
+> Windows Defender puede mostrar una advertencia para ejecutables sin firma digital comercial. El instalador se compila de forma transparente mediante GitHub Actions desde este código fuente público.
 
 ---
 
@@ -83,28 +77,17 @@ También puedes consultar todas las versiones en
 
 * Windows 10 u 11.
 * Python 3.12 o posterior.
-* Node.js LTS recomendado para los desafíos JavaScript actuales de YouTube.
+* Node.js LTS recomendado para los desafíos JavaScript de YouTube.
 * Conexión a Internet.
 
-### 1. Instalar Node.js
-
-Descarga la versión LTS desde [nodejs.org](https://nodejs.org/). Durante la
-instalación, asegúrate de agregar Node.js al `PATH` y reinicia la terminal.
-
-Puedes comprobar la instalación con:
-
-```powershell
-node --version
-```
-
-### 2. Clonar el repositorio
+### 1. Clonar el repositorio
 
 ```powershell
 git clone https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO.git
 cd YOUTIFY-MUSICA-VIDEO
 ```
 
-### 3. Crear un entorno virtual e instalar dependencias
+### 2. Crear entorno virtual e instalar dependencias
 
 ```powershell
 python -m venv .venv
@@ -113,72 +96,46 @@ python -m pip install --upgrade pip
 python -m pip install -r requirements.txt
 ```
 
-### 4. Ejecutar la aplicación
+### 3. Ejecutar la aplicación
 
 ```powershell
-python app.py
+python main.py
 ```
 
 ---
 
-## 📦 Compilar el ejecutable manualmente
+## 📦 Compilar el ejecutable e instalador localmente
 
-Si quieres crear tu propio `.exe`, instala PyInstaller:
+Si quieres generar tu propio binario compilado:
 
 ```powershell
 python -m pip install pyinstaller
+pyinstaller --noconsole --onefile --clean --icon=icon.ico --name Youtify main.py
 ```
 
-Después ejecuta:
+El ejecutable se generará en `dist\Youtify.exe`.
 
-```powershell
-pyinstaller --noconsole --onefile --clean --icon=icon.ico --name Youtify app.py
-```
-
-El ejecutable se generará en:
-
-```text
-dist\Youtify.exe
-```
-
-El parámetro `--onefile` crea un único ejecutable y `--noconsole` evita que
-aparezca una ventana negra de terminal junto a la aplicación.
-
-### Crear un instalador local
-
-El archivo `installer.iss` contiene la configuración para Inno Setup. Si tienes
-[Inno Setup](https://jrsoftware.org/isinfo.php) instalado:
+### Generar el instalador con Inno Setup
 
 ```powershell
 iscc installer.iss
 ```
 
-El instalador aparecerá en la carpeta `installer`.
+El instalador quedará listo en la carpeta `installer\Youtify-Setup.exe`.
 
 ---
 
-## 🚀 Publicar una nueva versión
+## 🚀 Publicar una nueva versión con CI/CD
 
-El workflow de GitHub Actions ubicado en
-`.github/workflows/build-release.yml` compila automáticamente el ejecutable y
-el instalador en Windows.
-
-Para publicar una nueva versión:
+El workflow de GitHub Actions en `.github/workflows/build-release.yml` compila y publica automáticamente la nueva versión al subir una etiqueta de versión:
 
 ```powershell
 git add .
-git commit -m "Prepare release v1.0.0"
-git tag v1.0.0
+git commit -m "feat: preparar release v1.0.7"
+git tag v1.0.7
 git push origin main
-git push origin v1.0.0
+git push origin v1.0.7
 ```
-
-Al subir una etiqueta con el formato `vX.Y.Z`, GitHub Actions:
-
-1. Instala Python y las dependencias.
-2. Compila `Youtify.exe`.
-3. Crea `Youtify-Setup.exe`.
-4. Publica el instalador en GitHub Releases.
 
 ---
 
@@ -186,51 +143,10 @@ Al subir una etiqueta con el formato `vX.Y.Z`, GitHub Actions:
 
 | Carpeta | Contenido |
 | --- | --- |
-| `Descargas\Youtify\Musica_Descargada` | Archivos MP3 |
-| `Descargas\Youtify\descargas_videos` | Archivos MP4 |
-| `%LOCALAPPDATA%\Youtify\ffmpeg` | FFmpeg y FFprobe descargados automáticamente |
-
----
-
-## ⚠️ Solución de problemas
-
-### Error HTTP 403 / Forbidden
-
-Actualiza `yt-dlp` y comprueba Node.js:
-
-```powershell
-python -m pip install --upgrade -r requirements.txt
-node --version
-```
-
-YouTube puede limitar temporalmente una dirección IP después de muchos
-intentos. Espera un tiempo antes de volver a descargar o prueba con una
-conexión permitida.
-
-### FFmpeg no se pudo descargar
-
-Comprueba que tienes conexión a Internet y permisos de escritura en la carpeta
-del programa. La aplicación necesita descargar `ffmpeg.exe` y `ffprobe.exe`
-para convertir MP3 o unir video y audio.
-
-### El antivirus detecta el ejecutable
-
-Los ejecutables creados con PyInstaller pueden producir falsos positivos porque
-no tienen una firma digital comercial. Puedes revisar el código fuente y
-compilar el programa localmente antes de añadir una excepción.
-
----
-
-## 🤝 Contribuir
-
-Youtify es un proyecto open source y las contribuciones son bienvenidas.
-
-1. Haz un fork del repositorio.
-2. Crea una rama para tu cambio.
-3. Prueba la aplicación en MP3 y MP4.
-4. Envía un pull request con una descripción clara.
-
-También puedes abrir un issue para reportar errores o proponer mejoras.
+| `Descargas\Youtify\Musica_Descargada` | Archivos MP3 con portada incrustada |
+| `Descargas\Youtify\descargas_videos` | Archivos MP4 en alta resolución |
+| `%LOCALAPPDATA%\Youtify\ffmpeg` | Binarios de FFmpeg y FFprobe |
+| `%LOCALAPPDATA%\Youtify\update_state.json` | Registro de preferencias de actualización |
 
 ---
 
@@ -238,4 +154,4 @@ También puedes abrir un issue para reportar errores o proponer mejoras.
 
 Este proyecto se distribuye bajo la [Licencia MIT](LICENSE).
 
-Desarrollado con ☕ y Python.
+Desarrollado con ☕ y Python por [jonathanZM15](https://github.com/jonathanZM15).

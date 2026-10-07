@@ -52,3 +52,8 @@ class Colors:
     STATUS_ERROR_FG = ("#fee2e2", "#450a0a")
     STATUS_ERROR_TEXT = ("#dc2626", "#f87171")
     PROGRESS_ERROR = ("#dc2626", "#ef4444")
+
+    # Colores semánticos directos
+    WARNING = ("#d97706", "#fbbf24")
+    ERROR = ("#dc2626", "#f87171")
+    SUCCESS = ("#16a34a", "#22c55e")

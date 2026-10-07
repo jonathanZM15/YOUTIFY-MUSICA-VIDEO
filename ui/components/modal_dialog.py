@@ -22,9 +22,9 @@ class ModalDialog(ctk.CTkToplevel):
         self.resizable(False, False)
         self.configure(fg_color=Colors.CARD_BG)
 
-        # Dimensiones compactas y elegantes
-        width = 420
-        height = 200 if dialog_type == "confirm" else 180
+        # Dimensiones adaptativas y elegantes
+        width = 440 if len(message) > 120 else 420
+        height = 230 if len(message) > 120 else (200 if dialog_type == "confirm" else 180)
 
         # Centrar sobre la ventana padre
         parent.update_idletasks()

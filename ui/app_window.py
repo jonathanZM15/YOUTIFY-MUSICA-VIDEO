@@ -1,5 +1,9 @@
 import os
+import random
+import re
+import shutil
 import threading
+import time
 from pathlib import Path
 from queue import Queue
 import customtkinter as ctk
@@ -24,9 +28,22 @@ from ui.components import (
     UpdateDialog,
 )
 
+ANSI_ESCAPE_RE = re.compile(
+    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
+)
+
+
+def _clean_text(raw: str) -> str:
+    if not raw:
+        return ""
+    return ANSI_ESCAPE_RE.sub("", str(raw)).strip()
+
 
 class AppWindow(ctk.CTk):
     """Orquestador principal de la ventana y controlador de eventos de Youtify."""
+
+    _queue_total_items: int = 0
+    _queue_completed_items: int = 0
 
     def __init__(self):
         super().__init__()
@@ -40,6 +57,8 @@ class AppWindow(ctk.CTk):
         # Sistema de Cola Asíncrona (Download Queue)
         self.download_queue = Queue()
         self.is_downloading = False
+        self._queue_total_items: int = 0
+        self._queue_completed_items: int = 0
         self._current_task = None
         self._inspect_timer = None
 
@@ -53,6 +72,9 @@ class AppWindow(ctk.CTk):
         self._init_window_icon()
         self.protocol("WM_DELETE_WINDOW", self._on_window_closing)
         self._build_layout()
+
+        # Verificación no bloqueante de entorno JavaScript (Node.js) para desafíos antibot
+        self._check_nodejs_environment()
 
         # Actualizador silencioso de compatibilidad yt-dlp en segundo plano
         Updater.check_and_update_async(log_callback=self._handle_log)
@@ -74,6 +96,17 @@ class AppWindow(ctk.CTk):
                 self.iconbitmap(str(ICON_PATH))
         except Exception:
             pass
+
+    def _check_nodejs_environment(self) -> None:
+        """Verifica de forma no bloqueante si Node.js está disponible en el PATH del sistema."""
+        if not shutil.which("node"):
+            self.console_view.append_log(
+                "[!] Aviso: Node.js no detectado en el PATH del sistema.\n"
+                "    Para resolver desafíos antibot de YouTube y mitigar errores 403 Forbidden,\n"
+                "    se recomienda instalar Node.js LTS desde: https://nodejs.org/"
+            )
+        else:
+            self.console_view.append_log("[✓] Entorno JavaScript: Node.js detectado para desafíos antibot.")
 
     def _build_layout(self) -> None:
         # 1. Cabecera minimalista limpia
@@ -223,6 +256,28 @@ class AppWindow(ctk.CTk):
         threading.Thread(target=_task, daemon=True).start()
 
     # ── Sistema de Cola y Descargas ──────────────────────────────
+    def _add_to_queue(self, url: str, fmt: str, quality: str, destination: Path) -> None:
+        """Expande playlists en descargas individuales o añade un video único a la cola."""
+        playlist_urls = DownloadEngine.extract_playlist_urls(url)
+        added_count = 0
+        if playlist_urls:
+            added_count = len(playlist_urls)
+            self.console_view.append_log(f"[+] Playlist detectada: {added_count} videos. Añadiendo todos a la cola...")
+            for item_url in playlist_urls:
+                self.download_queue.put((item_url, fmt, quality, destination))
+        else:
+            added_count = 1
+            self.download_queue.put((url, fmt, quality, destination))
+            self.console_view.append_log(f"[+] Añadido a la cola: {url}")
+
+        if not self.is_downloading:
+            self._queue_total_items = self.download_queue.qsize()
+            self._queue_completed_items = 0
+            pending = self.download_queue.qsize()
+            self.progress_widget.status_badge.configure(text=f"En cola: {pending} elemento(s)")
+        else:
+            self._queue_total_items += added_count
+
     def enqueue_download(self) -> None:
         url = self.download_card.get_url()
         if not self._validate_url(url):
@@ -232,13 +287,10 @@ class AppWindow(ctk.CTk):
         quality = self.download_card.get_quality()
         destination = self._get_current_destination()
 
-        self.download_queue.put((url, fmt, quality, destination))
         self.download_card.clear_url()
         self.preview_card.hide_preview()
 
-        pending = self.download_queue.qsize()
-        self.console_view.append_log(f"[+] Añadido a la cola: {url} (Pendientes: {pending})")
-        self.progress_widget.status_badge.configure(text=f"En cola: {pending} elemento(s)")
+        self._add_to_queue(url, fmt, quality, destination)
 
         if not self.is_downloading:
             self._process_next_in_queue()
@@ -256,9 +308,10 @@ class AppWindow(ctk.CTk):
         quality = self.download_card.get_quality()
         destination = self._get_current_destination()
 
-        self.download_queue.put((url, fmt, quality, destination))
         self.download_card.clear_url()
         self.preview_card.hide_preview()
+
+        self._add_to_queue(url, fmt, quality, destination)
         self._process_next_in_queue()
 
     def _validate_url(self, url: str) -> bool:
@@ -278,21 +331,50 @@ class AppWindow(ctk.CTk):
             return False
         return True
 
-    def _process_next_in_queue(self) -> None:
+    def _process_next_in_queue(self, apply_delay: bool = False) -> None:
         if self.download_queue.empty():
             self.is_downloading = False
             self.download_btn.configure(state="normal", text="Descargar ahora")
             self.enqueue_btn.configure(state="normal")
             self.progress_widget.set_completed()
+            self._queue_total_items = 0
+            self._queue_completed_items = 0
+            return
+
+        if apply_delay:
+            delay_sec = round(random.uniform(1.5, 4.0), 2)
+            delay_ms = int(delay_sec * 1000)
+            current_num = self._queue_completed_items + 1
+            total_num = max(self._queue_total_items, current_num)
+
+            # Durante la pausa antibot, el badge muestra el estado unificado activo
+            self.progress_widget.set_active_download(current_num, total_num)
+            self.console_view.append_log(
+                f"[*] Pausa antibot preventiva de {delay_sec}s antes de la siguiente descarga..."
+            )
+            self.after(delay_ms, lambda: self._process_next_in_queue(apply_delay=False))
             return
 
         self.is_downloading = True
+        if self._queue_total_items == 0:
+            self._queue_total_items = self.download_queue.qsize()
+            self._queue_completed_items = 0
+
         url, fmt, quality, destination = self.download_queue.get()
         self._current_task = url
 
         self.download_btn.configure(state="normal", text="Descargando...")
-        self.progress_widget.set_progress(0)
-        self.progress_widget.set_active_download("0%", "Iniciando...")
+
+        # Posicionar el progreso inicial de este elemento en la barra continua acumulativa
+        if self._queue_total_items > 0:
+            starting_prog = self._queue_completed_items / self._queue_total_items
+        else:
+            starting_prog = 0.0
+        self.progress_widget.set_progress(starting_prog)
+
+        current_num = self._queue_completed_items + 1
+        total_num = max(self._queue_total_items, current_num)
+        self.progress_widget.set_active_download(current_num, total_num)
         self.console_view.append_log(f"─── Procesando: {fmt} (Restantes en cola: {self.download_queue.qsize()}) ───")
 
         threading.Thread(
@@ -302,37 +384,95 @@ class AppWindow(ctk.CTk):
         ).start()
 
     def _run_download_thread(self, url: str, fmt: str, quality: str, destination: Path) -> None:
+        max_attempts = 2
+        for attempt in range(1, max_attempts + 1):
+            try:
+                self.downloader.execute_download(
+                    url=url,
+                    format_type=fmt,
+                    quality=quality,
+                    destination_dir=destination,
+                )
+                self.after(0, self._on_single_download_success)
+                return
+            except Exception as error:
+                err_msg = _clean_text(str(error))
+                is_403 = "403" in err_msg or "Forbidden" in err_msg
+
+                if is_403 and attempt < max_attempts:
+                    retry_wait = round(random.uniform(5.0, 8.0), 1)
+                    retry_log = (
+                        f"[!] Error 403: Forbidden detectado (antibot de YouTube).\n"
+                        f"[*] Reintentando automáticamente en {retry_wait}s (intento {attempt + 1}/{max_attempts})..."
+                    )
+                    self.after(0, lambda msg=retry_log: self.console_view.append_log(msg))
+                    time.sleep(retry_wait)
+                    continue
+
+                if is_403:
+                    err_msg += (
+                        "\n\nYouTube solicitó verificación antibot (HTTP 403 Forbidden).\n"
+                        "Se recomienda instalar Node.js LTS (https://nodejs.org/) para resolver este desafío."
+                    )
+
+                final_err = f"[ERROR] {err_msg}"
+                self.after(0, lambda msg=final_err: self.console_view.append_log(msg))
+                # El elemento falló definitivamente: contar como procesado para la barra continua
+                self.after(0, self._on_item_failed_definitively)
+                # Continuar procesando los siguientes elementos de la cola con pausa preventiva
+                self.after(0, lambda: self._process_next_in_queue(apply_delay=True))
+                self.after(
+                    0,
+                    lambda msg=err_msg: self._show_download_error(msg),
+                )
+                return
+
+    def _on_item_failed_definitively(self) -> None:
+        self._queue_completed_items += 1
+        if self._queue_total_items > 0:
+            overall = min(1.0, self._queue_completed_items / self._queue_total_items)
+            self.progress_widget.set_progress(overall)
+
+    def _show_download_error(self, message: str) -> None:
         try:
-            self.downloader.execute_download(
-                url=url,
-                format_type=fmt,
-                quality=quality,
-                destination_dir=destination,
-            )
-            self.after(0, self._on_single_download_success)
-        except Exception as error:
-            err_msg = str(error)
-            if "403" in err_msg or "Forbidden" in err_msg:
-                err_msg += "\n\nYouTube solicitó verificación antibot. Node.js LTS recomendado."
-            self.console_view.append_log(f"[ERROR] {err_msg}")
-            self.after(0, lambda: ModalDialog.show_error(self, title="Error de descarga", message=err_msg))
-            self.after(0, self._process_next_in_queue)
+            if self.winfo_exists():
+                ModalDialog.show_error(self, title="Error de descarga", message=message)
+        except Exception:
+            pass
 
     def _on_single_download_success(self) -> None:
+        self._queue_completed_items += 1
+        if self._queue_total_items > 0:
+            overall = min(1.0, self._queue_completed_items / self._queue_total_items)
+            self.progress_widget.set_progress(overall)
+        else:
+            self.progress_widget.set_progress(1.0)
         self.console_view.append_log("[✓] Archivo guardado y carátula incrustada con éxito.")
-        self._process_next_in_queue()
+        self._process_next_in_queue(apply_delay=True)
 
     # ── Callbacks de eventos desde el motor ───────────────────────
     def _handle_progress(self, progress_float: float, pct_str: str, speed_str: str, eta_str: str) -> None:
-        self.after(0, lambda: self.progress_widget.set_progress(progress_float))
-        self.after(0, lambda: self.progress_widget.set_active_download(pct_str, speed_str))
+        if self._queue_total_items > 0:
+            overall = max(0.0, min(1.0, (self._queue_completed_items + progress_float) / self._queue_total_items))
+        else:
+            overall = max(0.0, min(1.0, progress_float))
+
+        current_num = self._queue_completed_items + 1
+        total_num = max(self._queue_total_items, current_num)
+
+        self.after(0, lambda: self.progress_widget.set_progress(overall))
+        self.after(0, lambda: self.progress_widget.set_active_download(current_num, total_num))
 
     def _handle_log(self, message: str) -> None:
-        self.after(0, lambda: self.console_view.append_log(message))
+        clean_msg = _clean_text(message)
+        if clean_msg:
+            self.after(0, lambda: self.console_view.append_log(clean_msg))
 
     def _handle_status(self, status_code: str, label: str) -> None:
         if status_code == "converting":
-            self.after(0, self.progress_widget.set_converting)
+            current_num = self._queue_completed_items + 1
+            total_num = max(self._queue_total_items, current_num)
+            self.after(0, lambda: self.progress_widget.set_converting(current_num, total_num))
 
     # ── Actualizaciones de software ──────────────────────────────
     def _check_app_updates(self) -> None:

@@ -1,6 +1,7 @@
 from pathlib import Path
 import customtkinter as ctk
 from PIL import Image
+from config.settings import APP_VERSION
 from ui.theme import Colors
 
 
@@ -39,7 +40,7 @@ class Header(ctk.CTkFrame):
 
         ctk.CTkLabel(
             title_line,
-            text="v1.0.6",
+            text=f"v{APP_VERSION}",
             font=("Segoe UI", 10, "bold"),
             text_color=Colors.TEXT_MUTED,
             fg_color=Colors.CARD_BG,

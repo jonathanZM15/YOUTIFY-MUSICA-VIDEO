@@ -3,7 +3,9 @@ import customtkinter as ctk
 from config.settings import MAX_LOG_BUFFER_LINES
 from ui.theme import Colors
 
-_ANSI_RE = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+_ANSI_RE = re.compile(
+    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
+)
 
 
 class ConsoleView(ctk.CTkFrame):

@@ -1,5 +1,16 @@
+import re
 import customtkinter as ctk
 from ui.theme import Colors
+
+_ANSI_RE = re.compile(
+    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
+)
+
+
+def _clean_text(val: str) -> str:
+    if not val:
+        return ""
+    return _ANSI_RE.sub("", str(val)).strip()
 
 
 class ProgressBarWidget(ctk.CTkFrame):
@@ -32,18 +43,25 @@ class ProgressBarWidget(ctk.CTkFrame):
     def set_progress(self, value: float) -> None:
         self.progress_bar.set(value)
 
-    def set_active_download(self, pct_str: str, speed_str: str) -> None:
+    def set_active_download(self, current_item: int = 1, total_items: int = 1) -> None:
         self.progress_bar.configure(progress_color=Colors.PRIMARY)
+        try:
+            cur = int(current_item)
+            tot = int(total_items)
+            if tot > 1:
+                badge_text = f"⚡ Descargando {cur} de {tot}"
+            else:
+                badge_text = "⚡ Descargando..."
+        except (ValueError, TypeError):
+            badge_text = "⚡ Descargando..."
+
         self.status_badge.configure(
-            text=f"⚡ Descargando {pct_str}  •  {speed_str}",
+            text=badge_text,
             text_color=Colors.STATUS_ACTIVE_TEXT,
         )
 
-    def set_converting(self) -> None:
-        self.status_badge.configure(
-            text="🔄 Ensamblando y aplicando carátula ID3...",
-            text_color=Colors.STATUS_CONVERT_TEXT,
-        )
+    def set_converting(self, current_item: int = 1, total_items: int = 1) -> None:
+        self.set_active_download(current_item, total_items)
 
     def set_completed(self) -> None:
         self.progress_bar.configure(progress_color=Colors.PROGRESS_SUCCESS)

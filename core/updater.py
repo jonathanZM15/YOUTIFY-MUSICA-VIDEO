@@ -153,11 +153,25 @@ class Updater:
 
     @classmethod
     def check_and_update_async(cls, log_callback: Optional[Callable[[str], None]] = None) -> None:
-        """Comprueba de forma segura actualizaciones de dependencias en modo desarrollo."""
-        if getattr(sys, "frozen", False):
-            return
-
+        """Comprueba de forma segura actualizaciones de dependencias en modo desarrollo y reporta versión."""
         def _task():
+            current_ver = "desconocida"
+            try:
+                import yt_dlp.version
+                current_ver = getattr(yt_dlp.version, "__version__", "desconocida")
+                if log_callback:
+                    log_callback(f"[*] Motor yt-dlp: versión instalada {current_ver}")
+            except Exception:
+                pass
+
+            state = cls._read_update_state()
+            last_updated = state.get("yt_dlp_last_updated")
+            if last_updated and log_callback:
+                log_callback(f"[*] yt-dlp: última actualización registrada el {last_updated}")
+
+            if getattr(sys, "frozen", False):
+                return
+
             try:
                 result = subprocess.run(
                     [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--no-warn-script-location"],
@@ -166,8 +180,25 @@ class Updater:
                     timeout=30,
                 )
                 if result.returncode == 0:
-                    if "Requirement already satisfied" not in result.stdout and log_callback:
-                        log_callback("[*] yt-dlp actualizado a la versión más reciente.")
+                    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
+                    if "Requirement already satisfied" not in result.stdout:
+                        try:
+                            import importlib
+                            import yt_dlp.version
+                            importlib.reload(yt_dlp.version)
+                            current_ver = getattr(yt_dlp.version, "__version__", current_ver)
+                        except Exception:
+                            pass
+                        state["yt_dlp_last_updated"] = now_str
+                        cls._write_update_state(state)
+                        if log_callback:
+                            log_callback(f"[*] yt-dlp actualizado a la versión más reciente ({current_ver}) el {now_str}.")
+                    else:
+                        if not last_updated:
+                            state["yt_dlp_last_updated"] = now_str
+                            cls._write_update_state(state)
+                        if log_callback:
+                            log_callback(f"[*] yt-dlp verificado: ya se encuentra en la versión más reciente ({current_ver}).")
             except Exception:
                 pass
 

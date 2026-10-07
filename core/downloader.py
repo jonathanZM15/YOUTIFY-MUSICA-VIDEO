@@ -1,8 +1,22 @@
 import gc
+import re
 import shutil
 import time
 from pathlib import Path
 from typing import Callable, Optional
+
+# Regex estándar para suprimir secuencias de escape ANSI de terminal (colores, estilos, cursor)
+ANSI_ESCAPE_RE = re.compile(
+    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
+)
+
+
+def clean_ansi(text: Optional[str]) -> str:
+    """Elimina códigos de escape ANSI de secuencias de terminal (ej. colores de yt-dlp)."""
+    if not text:
+        return ""
+    return ANSI_ESCAPE_RE.sub("", str(text)).strip()
+
 
 from config.settings import (
     BUFFER_SIZE_BYTES,
@@ -29,6 +43,14 @@ class DownloadEngine:
         self.on_log = on_log
         self.on_status = on_status
         self._last_progress_time = 0.0
+        self._last_progress_value: float = 0.0
+        self.is_audio: bool = False
+        self._expected_stream_count: int = 1
+        self._stream_phase_index: int = 0
+        self._current_stream_id: Optional[str] = None
+        self._phase_offset_bytes: int = 0
+        self._phase_last_bytes: int = 0
+        self._total_combined_bytes: int = 0
 
     @staticmethod
     def extract_metadata_fast(url: str) -> Optional[dict]:
@@ -41,6 +63,9 @@ class DownloadEngine:
             "no_warnings": True,
             "socket_timeout": 8,
         }
+        if shutil.which("node"):
+            opts["js_runtimes"] = {"node": {}}
+            opts["remote_components"] = {"ejs": ["github"]}
         try:
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -73,6 +98,46 @@ class DownloadEngine:
         except Exception:
             return None
 
+    @staticmethod
+    def extract_playlist_urls(url: str) -> list[str]:
+        """Detecta si la URL es una playlist/mix y extrae las URLs individuales de cada video de forma ultrarrápida."""
+        if not url or ("list=" not in url and "playlist" not in url):
+            return []
+
+        from yt_dlp import YoutubeDL
+        opts = {
+            "extract_flat": "in_playlist",
+            "skip_download": True,
+            "quiet": True,
+            "no_warnings": True,
+            "socket_timeout": 8,
+        }
+        if shutil.which("node"):
+            opts["js_runtimes"] = {"node": {}}
+            opts["remote_components"] = {"ejs": ["github"]}
+        try:
+            with YoutubeDL(opts) as ydl:
+                info = ydl.extract_info(url, download=False)
+                if not info:
+                    return []
+                entries = info.get("entries")
+                if not entries:
+                    return []
+
+                urls = []
+                for entry in entries:
+                    if not entry:
+                        continue
+                    video_url = entry.get("url")
+                    video_id = entry.get("id")
+                    if video_url and (video_url.startswith("http://") or video_url.startswith("https://")):
+                        urls.append(video_url)
+                    elif video_id:
+                        urls.append(f"https://www.youtube.com/watch?v={video_id}")
+                return urls
+        except Exception:
+            return []
+
     def execute_download(
         self,
         url: str,
@@ -82,6 +147,16 @@ class DownloadEngine:
     ) -> None:
         destination_dir.mkdir(parents=True, exist_ok=True)
         is_audio = format_type.startswith("MP3")
+        self.is_audio = is_audio
+        self._last_progress_value = 0.0
+        self._last_progress_time = 0.0
+        self._stream_phase_index = 0
+        self._current_stream_id = None
+        self._phase_offset_bytes = 0
+        self._phase_last_bytes = 0
+        self._total_combined_bytes = 0
+        self._expected_stream_count = 1 if is_audio else 2
+
         tag_calidad = f"MP3 Audio ({quality})" if is_audio else f"MP4 Video ({quality})"
         self._log(f"[+] Formato seleccionado: {tag_calidad}")
         self._log(f"[+] Carpeta destino: {destination_dir.name}")
@@ -94,11 +169,41 @@ class DownloadEngine:
             quality=quality,
         )
 
+        from yt_dlp import YoutubeDL
+
+        # Si es video (selector dual bestvideo+bestaudio), estimar el peso total combinado
+        if not is_audio:
+            try:
+                meta_opts = {
+                    "quiet": True,
+                    "no_warnings": True,
+                    "skip_download": True,
+                    "format": options.get("format"),
+                    "socket_timeout": 8,
+                }
+                with YoutubeDL(meta_opts) as ydl_meta:
+                    meta_info = ydl_meta.extract_info(url, download=False)
+                    if meta_info:
+                        req_formats = meta_info.get("requested_formats")
+                        if req_formats and len(req_formats) >= 2:
+                            self._expected_stream_count = len(req_formats)
+                            self._total_combined_bytes = sum(
+                                f.get("filesize") or f.get("filesize_approx") or 0
+                                for f in req_formats
+                            )
+                        else:
+                            self._expected_stream_count = 1
+                            self._total_combined_bytes = (
+                                meta_info.get("filesize") or meta_info.get("filesize_approx") or 0
+                            )
+            except Exception:
+                self._expected_stream_count = 2
+                self._total_combined_bytes = 0
+
         self._log("[+] Conectando con los servidores de YouTube...")
         if self.on_status:
             self.on_status("connecting", "Conectando con servidores...")
 
-        from yt_dlp import YoutubeDL
         try:
             with YoutubeDL(options) as downloader:
                 downloader.download([url])
@@ -120,28 +225,128 @@ class DownloadEngine:
                 return
             self._last_progress_time = now
 
-            pct_str = data.get("_percent_str", "0%").strip()
-            speed_str = data.get("_speed_str", "—").strip()
-            eta_str = data.get("_eta_str", "").strip()
+            # Detección de stream y cambio de fase (ej. de video a audio)
+            stream_key = (data.get("info_dict") or {}).get("format_id") or data.get("filename")
+            if self._current_stream_id is None:
+                self._current_stream_id = stream_key
+            elif stream_key and stream_key != self._current_stream_id:
+                # Transición de stream detectada: acumular bytes de la fase previa
+                self._phase_offset_bytes += self._phase_last_bytes
+                self._phase_last_bytes = 0
+                self._current_stream_id = stream_key
+                self._stream_phase_index += 1
+
+            # Extracción segura y robusta de bytes crudos con mitigación de None / tipos inesperados
+            downloaded = data.get("downloaded_bytes")
+            if downloaded is None or not isinstance(downloaded, (int, float)):
+                downloaded = 0
+            self._phase_last_bytes = downloaded
+
+            stream_total = data.get("total_bytes")
+            if stream_total is None or not isinstance(stream_total, (int, float)) or stream_total <= 0:
+                stream_total = data.get("total_bytes_estimate")
+                if stream_total is None or not isinstance(stream_total, (int, float)) or stream_total <= 0:
+                    stream_total = 0
+
+            frag_idx = data.get("fragment_index")
+            frag_cnt = data.get("fragment_count")
+
+            # Cálculo de progreso unificado y continuo
+            if self.is_audio or self._expected_stream_count == 1:
+                # Descarga de un solo stream (MP3 o video progresivo)
+                if stream_total > 0 and downloaded > 0:
+                    numeric_progress = max(0.0, min(1.0, float(downloaded) / float(stream_total)))
+                    self._last_progress_value = numeric_progress
+                elif (
+                    isinstance(frag_idx, (int, float))
+                    and isinstance(frag_cnt, (int, float))
+                    and frag_cnt > 0
+                ):
+                    numeric_progress = max(0.0, min(1.0, float(frag_idx) / float(frag_cnt)))
+                    self._last_progress_value = numeric_progress
+                else:
+                    numeric_progress = self._last_progress_value
+            else:
+                # Descarga combinada de dos streams (video + audio)
+                if self._total_combined_bytes > 0:
+                    # Progreso acumulativo exacto basado en el peso total de ambos streams
+                    combined_bytes = self._phase_offset_bytes + downloaded
+                    calc_prog = float(combined_bytes) / float(self._total_combined_bytes)
+                    numeric_progress = max(self._last_progress_value, min(0.99, calc_prog))
+                    self._last_progress_value = numeric_progress
+                else:
+                    # Fallback ponderado (Video = 0% a 90%, Audio = 90% a 99%)
+                    if stream_total > 0 and downloaded > 0:
+                        stream_frac = max(0.0, min(1.0, float(downloaded) / float(stream_total)))
+                    elif (
+                        isinstance(frag_idx, (int, float))
+                        and isinstance(frag_cnt, (int, float))
+                        and frag_cnt > 0
+                    ):
+                        stream_frac = max(0.0, min(1.0, float(frag_idx) / float(frag_cnt)))
+                    else:
+                        stream_frac = 0.0
+
+                    if self._stream_phase_index == 0:
+                        calc_prog = stream_frac * 0.90
+                    else:
+                        calc_prog = 0.90 + (stream_frac * 0.09)
+
+                    numeric_progress = max(self._last_progress_value, min(0.99, calc_prog))
+                    self._last_progress_value = numeric_progress
+
+            # Formato de porcentaje textual coordinado con la barra
+            if not self.is_audio and self._expected_stream_count > 1:
+                pct_str = f"{numeric_progress * 100:.1f}%"
+            else:
+                raw_pct = data.get("_percent_str")
+                if isinstance(raw_pct, str) and "N/A" not in raw_pct and raw_pct.strip():
+                    pct_str = clean_ansi(raw_pct)
+                elif numeric_progress > 0:
+                    pct_str = f"{numeric_progress * 100:.1f}%"
+                else:
+                    pct_str = "0.0%"
+
+            speed_str = clean_ansi(data.get("_speed_str")) or "—"
+            eta_str = clean_ansi(data.get("_eta_str"))
+            pct_str = clean_ansi(pct_str)
 
             msg = f"⚡ Descargando: {pct_str} a {speed_str}"
             if eta_str:
                 msg += f" (restante: {eta_str})"
             self._log(msg)
 
-            try:
-                numeric_progress = float(pct_str.replace("%", "").replace(",", ".").strip()) / 100.0
-                numeric_progress = max(0.0, min(1.0, numeric_progress))
-            except ValueError:
-                numeric_progress = 0.0
-
             if self.on_progress:
                 self.on_progress(numeric_progress, pct_str, speed_str, eta_str)
 
         elif status == "finished":
-            self._log("[*] Conversión y etiquetado ID3 de metadatos con FFmpeg...")
-            if self.on_status:
-                self.on_status("converting", "Incrustando portada y metadatos...")
+            if self.is_audio or self._expected_stream_count == 1:
+                self._last_progress_value = 1.0
+                self._log("[*] Conversión y etiquetado ID3 de metadatos con FFmpeg...")
+                if self.on_status:
+                    self.on_status("converting", "Incrustando portada y metadatos...")
+                if self.on_progress:
+                    self.on_progress(1.0, "100.0%", "—", "")
+            else:
+                # Video multi-stream: verificar qué stream acaba de finalizar
+                if self._stream_phase_index == 0:
+                    # Cerrar fase de video sin reiniciar barra visual
+                    self._phase_offset_bytes += self._phase_last_bytes
+                    self._phase_last_bytes = 0
+                    self._stream_phase_index = 1
+                    self._current_stream_id = None
+                    self._log("[+] Stream de video completado. Descargando pista de audio...")
+                    if self.on_progress:
+                        pct_str = f"{self._last_progress_value * 100:.1f}%"
+                        self.on_progress(self._last_progress_value, pct_str, "—", "")
+                else:
+                    # Finalizaron ambos streams
+                    self._last_progress_value = 1.0
+                    self._log("[*] Fusión de video y audio en MP4 con FFmpeg...")
+                    if self.on_status:
+                        self.on_status("converting", "Ensamblando pistas con FFmpeg...")
+                    if self.on_progress:
+                        self.on_progress(1.0, "100.0%", "—", "")
 
     def _build_yt_dlp_options(
         self,
@@ -154,13 +359,14 @@ class DownloadEngine:
             "outtmpl": str(destination / "%(title)s.%(ext)s"),
             "windowsfilenames": True,
             "restrictfilenames": True,
-            "noplaylist": False,
+            "noplaylist": True,
             "retries": 10,
             "fragment_retries": 10,
             "socket_timeout": DOWNLOAD_TIMEOUT_SEC,
             "concurrent_fragment_downloads": CONCURRENT_FRAGMENT_DOWNLOADS,
             "buffersize": BUFFER_SIZE_BYTES,
             "http_chunk_size": HTTP_CHUNK_SIZE_BYTES,
+            "color": "never",
             "http_headers": {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -221,4 +427,4 @@ class DownloadEngine:
 
     def _log(self, message: str) -> None:
         if self.on_log:
-            self.on_log(message)
+            self.on_log(clean_ansi(message))
