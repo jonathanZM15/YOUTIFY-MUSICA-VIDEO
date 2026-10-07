@@ -1,5 +1,6 @@
 from typing import Callable, Optional
 import customtkinter as ctk
+from config.settings import AUDIO_QUALITIES, VIDEO_QUALITIES
 from ui.theme import Colors
 
 
@@ -20,6 +21,7 @@ class DownloadCard(ctk.CTkFrame):
             border_color=Colors.BORDER,
         )
         self.pack(fill="x", padx=36, pady=(0, 10))
+        self.on_format_change = on_format_change
         self.on_url_modified = on_url_modified
 
         # ── Campo de URL con diseño minimalista ──
@@ -80,7 +82,7 @@ class DownloadCard(ctk.CTkFrame):
             dropdown_text_color=Colors.DROPDOWN_TEXT,
             font=("Segoe UI", 12),
             dropdown_font=("Segoe UI", 12),
-            command=on_format_change,
+            command=self._handle_format_change,
         )
         self.format_menu.set("MP3 (audio)")
         self.format_menu.pack(side="left", padx=(0, 24))
@@ -93,9 +95,10 @@ class DownloadCard(ctk.CTkFrame):
             text_color=Colors.TEXT_SECONDARY,
         ).pack(side="left", padx=(0, 8))
 
+        # Inicia con calidades de audio (kbps) porque el formato por defecto es MP3
         self.quality_menu = ctk.CTkComboBox(
             options_row,
-            values=["Máxima", "1080p", "720p", "480p", "360p"],
+            values=AUDIO_QUALITIES,
             state="readonly",
             width=135,
             height=34,
@@ -114,6 +117,17 @@ class DownloadCard(ctk.CTkFrame):
         )
         self.quality_menu.set("Máxima")
         self.quality_menu.pack(side="left")
+
+    def _handle_format_change(self, selection: str) -> None:
+        """Actualiza el menú de calidad dinámicamente según el formato elegido."""
+        if selection.startswith("MP3"):
+            self.quality_menu.configure(values=AUDIO_QUALITIES)
+        else:
+            self.quality_menu.configure(values=VIDEO_QUALITIES)
+        self.quality_menu.set("Máxima")
+
+        if self.on_format_change:
+            self.on_format_change(selection)
 
     def _on_trace_url(self, *args):
         if self.on_url_modified:

@@ -11,6 +11,7 @@ from config.settings import (
     HTTP_CHUNK_SIZE_BYTES,
     PROGRESS_THROTTLE_SEC,
     QUALITY_MAP,
+    AUDIO_QUALITY_MAP,
 )
 from core.ffmpeg_manager import FFmpegManager
 
@@ -81,7 +82,8 @@ class DownloadEngine:
     ) -> None:
         destination_dir.mkdir(parents=True, exist_ok=True)
         is_audio = format_type.startswith("MP3")
-
+        tag_calidad = f"MP3 Audio ({quality})" if is_audio else f"MP4 Video ({quality})"
+        self._log(f"[+] Formato seleccionado: {tag_calidad}")
         self._log(f"[+] Carpeta destino: {destination_dir.name}")
         ffmpeg_dir = FFmpegManager.resolve_ffmpeg(log_callback=self._log)
 
@@ -177,6 +179,7 @@ class DownloadEngine:
             options["remote_components"] = {"ejs": ["github"]}
 
         if is_audio:
+            preferred_quality = AUDIO_QUALITY_MAP.get(quality, "0") if quality else "0"
             options.update({
                 "format": "bestaudio/best",
                 "writethumbnail": True,
@@ -184,7 +187,7 @@ class DownloadEngine:
                     {
                         "key": "FFmpegExtractAudio",
                         "preferredcodec": "mp3",
-                        "preferredquality": "0",
+                        "preferredquality": preferred_quality,
                     },
                     {
                         # Inyectar tags ID3 (artista, álbum, título, fecha)

@@ -21,6 +21,7 @@ from ui.components import (
     ConsoleView,
     ProgressBarWidget,
     ModalDialog,
+    UpdateDialog,
 )
 
 
@@ -55,6 +56,9 @@ class AppWindow(ctk.CTk):
 
         # Actualizador silencioso de compatibilidad yt-dlp en segundo plano
         Updater.check_and_update_async(log_callback=self._handle_log)
+
+        # Comprobación no intrusiva de versiones en GitHub Releases tras montar la ventana
+        self.after(1500, self._check_app_updates)
 
     def _init_window_icon(self) -> None:
         if ICON_PATH.exists():
@@ -329,3 +333,18 @@ class AppWindow(ctk.CTk):
     def _handle_status(self, status_code: str, label: str) -> None:
         if status_code == "converting":
             self.after(0, self.progress_widget.set_converting)
+
+    # ── Actualizaciones de software ──────────────────────────────
+    def _check_app_updates(self) -> None:
+        """Lanza la verificación de versiones en GitHub en un hilo de fondo."""
+        Updater.check_app_update_async(
+            callback=lambda release_info: self.after(0, lambda: self._prompt_update(release_info))
+        )
+
+    def _prompt_update(self, release_info) -> None:
+        """Presenta el diálogo modal de actualización de forma segura si la ventana sigue activa."""
+        try:
+            if self.winfo_exists():
+                UpdateDialog(self, release_info=release_info)
+        except Exception:
+            pass

@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.0.6"
+APP_VERSION = "1.0.7"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)
@@ -41,6 +41,12 @@ FFMPEG_OFFICIAL_URL = (
     "latest/ffmpeg-master-latest-win64-gpl.zip"
 )
 
+# Integración con GitHub Releases (Actualizaciones automáticas)
+GITHUB_REPO = "jonathanZM15/YOUTIFY-MUSICA-VIDEO"
+GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
+UPDATE_STATE_FILE = LOCAL_APPDATA / APP_NAME / "update_state.json"
+
 # Dominios autorizados de YouTube (seguridad cibernética / anti-phishing / anti-injection)
 VALID_YOUTUBE_HOSTS = frozenset({
     "youtube.com",
@@ -51,10 +57,24 @@ VALID_YOUTUBE_HOSTS = frozenset({
     "www.youtu.be",
 })
 
-# Mapa de resoluciones
+# Opciones disponibles en la interfaz
+VIDEO_QUALITIES = ["Máxima", "1080p", "720p", "480p", "360p"]
+AUDIO_QUALITIES = ["Máxima", "320 kbps", "256 kbps", "192 kbps", "128 kbps"]
+
+# Mapa de resoluciones de video (altura en px)
 QUALITY_MAP = {
     "1080p": 1080,
     "720p": 720,
     "480p": 480,
     "360p": 360,
+}
+
+# Mapa de calidad de compresión de audio para FFmpegExtractAudio
+# "0" = VBR de máxima calidad / menor compresión acústica; "320"/"256"/etc = CBR en kbps
+AUDIO_QUALITY_MAP = {
+    "Máxima": "0",
+    "320 kbps": "320",
+    "256 kbps": "256",
+    "192 kbps": "192",
+    "128 kbps": "128",
 }

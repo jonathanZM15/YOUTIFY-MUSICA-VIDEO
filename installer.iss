@@ -4,7 +4,7 @@
 #define MyAppExeName "Youtify.exe"
 
 [Setup]
-AppId={{E3C6F949-4A6F-4D95-9B8F-4A4D7F4C4B39}
+AppId={E3C6F949-4A6F-4D95-9B8F-4A4D7F4C4B39}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
