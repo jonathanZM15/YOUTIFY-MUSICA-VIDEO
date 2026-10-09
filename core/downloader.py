@@ -21,6 +21,7 @@ def clean_ansi(text: Optional[str]) -> str:
 from config.settings import (
     BUFFER_SIZE_BYTES,
     CONCURRENT_FRAGMENT_DOWNLOADS,
+    DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
     DOWNLOAD_TIMEOUT_SEC,
     HTTP_CHUNK_SIZE_BYTES,
     PROGRESS_THROTTLE_SEC,
@@ -28,6 +29,15 @@ from config.settings import (
     AUDIO_QUALITY_MAP,
 )
 from core.ffmpeg_manager import FFmpegManager
+
+# NOTA DE ARQUITECTURA / ROADMAP ANTIBOT:
+# 1. Estrategia activa (inmediata y predeterminada): Emulación en cascada de clientes oficiales
+#    móviles (player_client: ios, android, web). Resuelve el error "Sign in to confirm you're not a bot"
+#    sin requerir Node.js, cookies de navegador ni herramientas de programador en la máquina del usuario.
+# 2. Roadmap mediano plazo: Integración de un motor JS ultra-ligero embebido (como QuickJS portátil ~2MB)
+#    directamente en el empaquetador del instalador (.iss / dist) como salvaguarda autónoma si YouTube
+#    bloquea en el futuro clientes móviles.
+
 
 
 class DownloadEngine:
@@ -62,6 +72,7 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 8,
+            "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
         }
         if shutil.which("node"):
             opts["js_runtimes"] = {"node": {}}
@@ -111,6 +122,7 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 8,
+            "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
         }
         if shutil.which("node"):
             opts["js_runtimes"] = {"node": {}}
@@ -180,7 +192,11 @@ class DownloadEngine:
                     "skip_download": True,
                     "format": options.get("format"),
                     "socket_timeout": 8,
+                    "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
                 }
+                if shutil.which("node"):
+                    meta_opts["js_runtimes"] = {"node": {}}
+                    meta_opts["remote_components"] = {"ejs": ["github"]}
                 with YoutubeDL(meta_opts) as ydl_meta:
                     meta_info = ydl_meta.extract_info(url, download=False)
                     if meta_info:
@@ -373,6 +389,7 @@ class DownloadEngine:
                     "AppleWebKit/537.36 Chrome/131.0 Safari/537.36"
                 )
             },
+            "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
             "progress_hooks": [self._progress_hook],
             "ffmpeg_location": str(ffmpeg_dir),
             "quiet": True,
@@ -409,8 +426,8 @@ class DownloadEngine:
         else:
             height = QUALITY_MAP.get(quality)
             selector = (
-                f"bestvideo[height<={height}]+bestaudio/best[height<={height}]"
-                if height else "bestvideo+bestaudio/best"
+                f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
+                if height else "bestvideo+bestaudio/best/best"
             )
             options.update({
                 "format": selector,

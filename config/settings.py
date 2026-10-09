@@ -57,6 +57,15 @@ VALID_YOUTUBE_HOSTS = frozenset({
     "www.youtu.be",
 })
 
+# Configuración de extracción antibot de YouTube: emulación de clientes móviles oficiales (iOS / Android / Web)
+# Elimina la necesidad de Node.js o runtimes externos en la máquina del usuario final.
+DEFAULT_YOUTUBE_EXTRACTOR_ARGS = {
+    "youtube": {
+        "player_client": ["ios", "android", "web"],
+    }
+}
+
+
 # Opciones disponibles en la interfaz
 VIDEO_QUALITIES = ["Máxima", "1080p", "720p", "480p", "360p"]
 AUDIO_QUALITIES = ["Máxima", "320 kbps", "256 kbps", "192 kbps", "128 kbps"]

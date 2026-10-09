@@ -297,7 +297,6 @@ class AppWindow(ctk.CTk):
 
     def start_download_task(self) -> None:
         if self.is_downloading:
-            self.enqueue_download()
             return
 
         url = self.download_card.get_url()
@@ -347,7 +346,9 @@ class AppWindow(ctk.CTk):
             current_num = self._queue_completed_items + 1
             total_num = max(self._queue_total_items, current_num)
 
-            # Durante la pausa antibot, el badge muestra el estado unificado activo
+            # Mantener botón de descarga deshabilitado durante la pausa antibot
+            self.download_btn.configure(state="disabled", text="En cola...")
+            self.enqueue_btn.configure(state="normal")
             self.progress_widget.set_active_download(current_num, total_num)
             self.console_view.append_log(
                 f"[*] Pausa antibot preventiva de {delay_sec}s antes de la siguiente descarga..."
@@ -363,7 +364,9 @@ class AppWindow(ctk.CTk):
         url, fmt, quality, destination = self.download_queue.get()
         self._current_task = url
 
-        self.download_btn.configure(state="normal", text="Descargando...")
+        # Deshabilitar Descargar ahora durante la descarga, manteniendo Añadir a la cola funcional
+        self.download_btn.configure(state="disabled", text="Descargando...")
+        self.enqueue_btn.configure(state="normal")
 
         # Posicionar el progreso inicial de este elemento en la barra continua acumulativa
         if self._queue_total_items > 0:
@@ -397,22 +400,27 @@ class AppWindow(ctk.CTk):
                 return
             except Exception as error:
                 err_msg = _clean_text(str(error))
-                is_403 = "403" in err_msg or "Forbidden" in err_msg
+                is_antibot = (
+                    "403" in err_msg
+                    or "Forbidden" in err_msg
+                    or "Sign in to confirm you're not a bot" in err_msg
+                    or "not a bot" in err_msg.lower()
+                )
 
-                if is_403 and attempt < max_attempts:
+                if is_antibot and attempt < max_attempts:
                     retry_wait = round(random.uniform(5.0, 8.0), 1)
                     retry_log = (
-                        f"[!] Error 403: Forbidden detectado (antibot de YouTube).\n"
+                        f"[!] Desafío antibot de YouTube detectado.\n"
                         f"[*] Reintentando automáticamente en {retry_wait}s (intento {attempt + 1}/{max_attempts})..."
                     )
                     self.after(0, lambda msg=retry_log: self.console_view.append_log(msg))
                     time.sleep(retry_wait)
                     continue
 
-                if is_403:
+                if is_antibot:
                     err_msg += (
-                        "\n\nYouTube solicitó verificación antibot (HTTP 403 Forbidden).\n"
-                        "Se recomienda instalar Node.js LTS (https://nodejs.org/) para resolver este desafío."
+                        "\n\nYouTube activó una verificación antibot temporal para esta dirección IP.\n"
+                        "Se recomienda esperar unos minutos o instalar Node.js LTS (https://nodejs.org/) si persiste."
                     )
 
                 final_err = f"[ERROR] {err_msg}"
