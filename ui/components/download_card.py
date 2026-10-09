@@ -118,6 +118,24 @@ class DownloadCard(ctk.CTkFrame):
         self.quality_menu.set("Máxima")
         self.quality_menu.pack(side="left")
 
+        # Checkbox sutil para incrustar carátula
+        self.thumbnail_var = ctk.BooleanVar(value=True)
+        self.thumbnail_checkbox = ctk.CTkCheckBox(
+            options_row,
+            text="Incrustar carátula",
+            variable=self.thumbnail_var,
+            font=("Segoe UI", 12),
+            text_color=Colors.TEXT_SECONDARY,
+            fg_color=Colors.PRIMARY,
+            hover_color=Colors.PRIMARY_HOVER,
+            border_color=Colors.BORDER_INPUT,
+            corner_radius=4,
+            height=34,
+            checkbox_width=18,
+            checkbox_height=18,
+        )
+        self.thumbnail_checkbox.pack(side="left", padx=(20, 0))
+
     def _handle_format_change(self, selection: str) -> None:
         """Actualiza el menú de calidad dinámicamente según el formato elegido."""
         if selection.startswith("MP3"):
@@ -144,3 +162,7 @@ class DownloadCard(ctk.CTkFrame):
 
     def get_quality(self) -> str:
         return self.quality_menu.get()
+
+    def get_embed_thumbnail(self) -> bool:
+        return self.thumbnail_var.get()
+

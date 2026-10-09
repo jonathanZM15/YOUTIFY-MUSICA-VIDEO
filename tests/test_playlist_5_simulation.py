@@ -46,7 +46,7 @@ class TestPlaylist5Simulation(unittest.TestCase):
             # Mapeo de comportamiento de descarga por URL
             attempts_per_url = {}
 
-            def fake_execute(url, format_type, quality, destination_dir):
+            def fake_execute(url, format_type, quality, destination_dir, *args, **kwargs):
                 attempts_per_url[url] = attempts_per_url.get(url, 0) + 1
                 att = attempts_per_url[url]
 

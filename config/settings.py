@@ -4,7 +4,7 @@ from pathlib import Path
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.0.8"
+APP_VERSION = "1.0.9"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)
@@ -87,3 +87,9 @@ AUDIO_QUALITY_MAP = {
     "192 kbps": "192",
     "128 kbps": "128",
 }
+
+# Límites de optimización de carátula / thumbnail (evita sobrepeso en MP3/MP4)
+THUMBNAIL_MAX_DIMENSION = 600      # Redimensión máxima de 600x600 px manteniendo proporción
+THUMBNAIL_JPEG_QUALITY = 85        # Calidad de compresión JPEG (~30-60 KB vs 2-5 MB en PNG)
+DEFAULT_EMBED_THUMBNAIL = True
+

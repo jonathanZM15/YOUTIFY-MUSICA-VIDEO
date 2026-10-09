@@ -256,7 +256,14 @@ class AppWindow(ctk.CTk):
         threading.Thread(target=_task, daemon=True).start()
 
     # ── Sistema de Cola y Descargas ──────────────────────────────
-    def _add_to_queue(self, url: str, fmt: str, quality: str, destination: Path) -> None:
+    def _add_to_queue(
+        self,
+        url: str,
+        fmt: str,
+        quality: str,
+        destination: Path,
+        embed_thumbnail: bool = True,
+    ) -> None:
         """Expande playlists en descargas individuales o añade un video único a la cola."""
         playlist_urls = DownloadEngine.extract_playlist_urls(url)
         added_count = 0
@@ -264,10 +271,10 @@ class AppWindow(ctk.CTk):
             added_count = len(playlist_urls)
             self.console_view.append_log(f"[+] Playlist detectada: {added_count} videos. Añadiendo todos a la cola...")
             for item_url in playlist_urls:
-                self.download_queue.put((item_url, fmt, quality, destination))
+                self.download_queue.put((item_url, fmt, quality, destination, embed_thumbnail))
         else:
             added_count = 1
-            self.download_queue.put((url, fmt, quality, destination))
+            self.download_queue.put((url, fmt, quality, destination, embed_thumbnail))
             self.console_view.append_log(f"[+] Añadido a la cola: {url}")
 
         if not self.is_downloading:
@@ -286,11 +293,12 @@ class AppWindow(ctk.CTk):
         fmt = self.download_card.get_format()
         quality = self.download_card.get_quality()
         destination = self._get_current_destination()
+        embed_thumb = self.download_card.get_embed_thumbnail()
 
         self.download_card.clear_url()
         self.preview_card.hide_preview()
 
-        self._add_to_queue(url, fmt, quality, destination)
+        self._add_to_queue(url, fmt, quality, destination, embed_thumb)
 
         if not self.is_downloading:
             self._process_next_in_queue()
@@ -306,11 +314,12 @@ class AppWindow(ctk.CTk):
         fmt = self.download_card.get_format()
         quality = self.download_card.get_quality()
         destination = self._get_current_destination()
+        embed_thumb = self.download_card.get_embed_thumbnail()
 
         self.download_card.clear_url()
         self.preview_card.hide_preview()
 
-        self._add_to_queue(url, fmt, quality, destination)
+        self._add_to_queue(url, fmt, quality, destination, embed_thumb)
         self._process_next_in_queue()
 
     def _validate_url(self, url: str) -> bool:
@@ -361,7 +370,12 @@ class AppWindow(ctk.CTk):
             self._queue_total_items = self.download_queue.qsize()
             self._queue_completed_items = 0
 
-        url, fmt, quality, destination = self.download_queue.get()
+        queue_item = self.download_queue.get()
+        if len(queue_item) == 5:
+            url, fmt, quality, destination, embed_thumbnail = queue_item
+        else:
+            url, fmt, quality, destination = queue_item
+            embed_thumbnail = True
         self._current_task = url
 
         # Deshabilitar Descargar ahora durante la descarga, manteniendo Añadir a la cola funcional
@@ -382,20 +396,39 @@ class AppWindow(ctk.CTk):
 
         threading.Thread(
             target=self._run_download_thread,
-            args=(url, fmt, quality, destination),
+            args=(url, fmt, quality, destination, embed_thumbnail),
             daemon=True,
         ).start()
 
-    def _run_download_thread(self, url: str, fmt: str, quality: str, destination: Path) -> None:
+    def _run_download_thread(
+        self,
+        url: str,
+        fmt: str,
+        quality: str,
+        destination: Path,
+        embed_thumbnail: bool = True,
+    ) -> None:
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             try:
-                self.downloader.execute_download(
-                    url=url,
-                    format_type=fmt,
-                    quality=quality,
-                    destination_dir=destination,
-                )
+                try:
+                    self.downloader.execute_download(
+                        url=url,
+                        format_type=fmt,
+                        quality=quality,
+                        destination_dir=destination,
+                        embed_thumbnail=embed_thumbnail,
+                    )
+                except TypeError as type_err:
+                    if "embed_thumbnail" in str(type_err):
+                        self.downloader.execute_download(
+                            url=url,
+                            format_type=fmt,
+                            quality=quality,
+                            destination_dir=destination,
+                        )
+                    else:
+                        raise
                 self.after(0, self._on_single_download_success)
                 return
             except Exception as error:

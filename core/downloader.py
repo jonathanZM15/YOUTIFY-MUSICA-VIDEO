@@ -21,14 +21,19 @@ def clean_ansi(text: Optional[str]) -> str:
 from config.settings import (
     BUFFER_SIZE_BYTES,
     CONCURRENT_FRAGMENT_DOWNLOADS,
+    DEFAULT_EMBED_THUMBNAIL,
     DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
     DOWNLOAD_TIMEOUT_SEC,
     HTTP_CHUNK_SIZE_BYTES,
     PROGRESS_THROTTLE_SEC,
     QUALITY_MAP,
     AUDIO_QUALITY_MAP,
+    THUMBNAIL_JPEG_QUALITY,
+    THUMBNAIL_MAX_DIMENSION,
 )
 from core.ffmpeg_manager import FFmpegManager
+from PIL import Image
+from yt_dlp.postprocessor import PostProcessor
 
 # NOTA DE ARQUITECTURA / ROADMAP ANTIBOT:
 # 1. Estrategia activa (inmediata y predeterminada): Emulación en cascada de clientes oficiales
@@ -37,6 +42,95 @@ from core.ffmpeg_manager import FFmpegManager
 # 2. Roadmap mediano plazo: Integración de un motor JS ultra-ligero embebido (como QuickJS portátil ~2MB)
 #    directamente en el empaquetador del instalador (.iss / dist) como salvaguarda autónoma si YouTube
 #    bloquea en el futuro clientes móviles.
+
+
+def optimize_thumbnail(
+    thumb_path: Path,
+    max_dimension: int = THUMBNAIL_MAX_DIMENSION,
+    quality: int = THUMBNAIL_JPEG_QUALITY,
+) -> Path:
+    """
+    Optimiza la imagen de carátula descargada con Pillow:
+    - Si ya es JPEG y sus dimensiones están dentro del límite, no reprocesa innecesariamente.
+    - Si supera max_dimension, redimensiona manteniendo relación de aspecto.
+    - Convierte a JPEG con compresión calidad 80-85 (~30-60 KB vs 2-5 MB en PNG/WebP).
+    """
+    if not thumb_path or not thumb_path.exists():
+        return thumb_path
+
+    try:
+        with Image.open(thumb_path) as img:
+            width, height = img.size
+            img_format = (img.format or "").upper()
+
+            # Evitar reprocesar si ya es un JPEG dentro de los límites
+            if img_format == "JPEG" and width <= max_dimension and height <= max_dimension:
+                return thumb_path
+
+            # Redimensionar solo si excede las dimensiones máximas
+            if width > max_dimension or height > max_dimension:
+                img.thumbnail((max_dimension, max_dimension), Image.Resampling.LANCZOS)
+
+            # Normalizar modos de color (RGBA, LA, P) a RGB con fondo blanco
+            if img.mode in ("RGBA", "LA", "P"):
+                background = Image.new("RGB", img.size, (255, 255, 255))
+                if img.mode == "P":
+                    img = img.convert("RGBA")
+                mask = img.split()[-1] if "A" in img.mode else None
+                background.paste(img, mask=mask)
+                final_img = background
+            elif img.mode != "RGB":
+                final_img = img.convert("RGB")
+            else:
+                final_img = img
+
+            target_path = thumb_path.with_suffix(".jpg")
+            final_img.save(
+                target_path,
+                format="JPEG",
+                quality=quality,
+                optimize=True,
+            )
+
+        # Eliminar archivo original si tenía extensión diferente (.webp, .png)
+        if target_path.resolve() != thumb_path.resolve() and thumb_path.exists():
+            thumb_path.unlink(missing_ok=True)
+
+        return target_path
+    except Exception:
+        # En caso de cualquier error en la imagen, retornar la original para no romper la descarga
+        return thumb_path
+
+
+class ThumbnailOptimizerPP(PostProcessor):
+    """Postprocesador que intercepta la miniatura descargada y la optimiza con Pillow antes de incrustarla."""
+
+    def __init__(
+        self,
+        downloader=None,
+        max_dimension: int = THUMBNAIL_MAX_DIMENSION,
+        quality: int = THUMBNAIL_JPEG_QUALITY,
+    ):
+        super().__init__(downloader)
+        self.max_dimension = max_dimension
+        self.quality = quality
+
+    def run(self, info: dict):
+        thumbnails = info.get("thumbnails") or []
+        for thumb in thumbnails:
+            filepath = thumb.get("filepath")
+            if filepath and Path(filepath).exists():
+                optimized_path = optimize_thumbnail(
+                    Path(filepath),
+                    max_dimension=self.max_dimension,
+                    quality=self.quality,
+                )
+                str_opt = str(optimized_path)
+                thumb["filepath"] = str_opt
+                if "__files_to_move" in info and filepath in info["__files_to_move"]:
+                    info["__files_to_move"][str_opt] = info["__files_to_move"].pop(filepath)
+        return [], info
+
 
 
 
@@ -156,6 +250,7 @@ class DownloadEngine:
         format_type: str,
         quality: str,
         destination_dir: Path,
+        embed_thumbnail: bool = DEFAULT_EMBED_THUMBNAIL,
     ) -> None:
         destination_dir.mkdir(parents=True, exist_ok=True)
         is_audio = format_type.startswith("MP3")
@@ -172,6 +267,10 @@ class DownloadEngine:
         tag_calidad = f"MP3 Audio ({quality})" if is_audio else f"MP4 Video ({quality})"
         self._log(f"[+] Formato seleccionado: {tag_calidad}")
         self._log(f"[+] Carpeta destino: {destination_dir.name}")
+        if embed_thumbnail:
+            self._log("[+] Carátula: Incrustación y optimización activada (JPEG máx 600px)")
+        else:
+            self._log("[+] Carátula: Desactivada por el usuario (archivo ultraligero)")
         ffmpeg_dir = FFmpegManager.resolve_ffmpeg(log_callback=self._log)
 
         options = self._build_yt_dlp_options(
@@ -179,6 +278,7 @@ class DownloadEngine:
             destination=destination_dir,
             ffmpeg_dir=ffmpeg_dir,
             quality=quality,
+            embed_thumbnail=embed_thumbnail,
         )
 
         from yt_dlp import YoutubeDL
@@ -222,6 +322,22 @@ class DownloadEngine:
 
         try:
             with YoutubeDL(options) as downloader:
+                if embed_thumbnail:
+                    embed_idx = next(
+                        (i for i, pp in enumerate(downloader._pps.get("post_process", []))
+                         if pp.__class__.__name__ == "EmbedThumbnailPP"),
+                        None
+                    )
+                    optimizer = ThumbnailOptimizerPP(
+                        downloader,
+                        max_dimension=THUMBNAIL_MAX_DIMENSION,
+                        quality=THUMBNAIL_JPEG_QUALITY,
+                    )
+                    if embed_idx is not None:
+                        downloader._pps["post_process"].insert(embed_idx, optimizer)
+                    else:
+                        downloader._pps["post_process"].append(optimizer)
+
                 downloader.download([url])
             # Limpieza de imágenes sueltas que yt-dlp pueda haber dejado
             for ext in ("*.webp", "*.jpg", "*.png", "*.jpeg"):
@@ -370,6 +486,7 @@ class DownloadEngine:
         destination: Path,
         ffmpeg_dir: Path,
         quality: Optional[str] = None,
+        embed_thumbnail: bool = DEFAULT_EMBED_THUMBNAIL,
     ) -> dict:
         options = {
             "outtmpl": str(destination / "%(title)s.%(ext)s"),
@@ -403,25 +520,28 @@ class DownloadEngine:
 
         if is_audio:
             preferred_quality = AUDIO_QUALITY_MAP.get(quality, "0") if quality else "0"
+            postprocessors = [
+                {
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": preferred_quality,
+                },
+                {
+                    # Inyectar tags ID3 (artista, álbum, título, fecha)
+                    "key": "FFmpegMetadata",
+                    "add_metadata": True,
+                },
+            ]
+            if embed_thumbnail:
+                postprocessors.append({
+                    # Incrustar portada oficial directamente en el MP3 y borrar la miniatura suelta
+                    "key": "EmbedThumbnail",
+                })
+
             options.update({
                 "format": "bestaudio/best",
-                "writethumbnail": True,
-                "postprocessors": [
-                    {
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": preferred_quality,
-                    },
-                    {
-                        # Inyectar tags ID3 (artista, álbum, título, fecha)
-                        "key": "FFmpegMetadata",
-                        "add_metadata": True,
-                    },
-                    {
-                        # Incrustar portada oficial directamente en el MP3 y borrar la miniatura suelta
-                        "key": "EmbedThumbnail",
-                    },
-                ],
+                "writethumbnail": embed_thumbnail,
+                "postprocessors": postprocessors,
             })
         else:
             height = QUALITY_MAP.get(quality)
@@ -429,15 +549,22 @@ class DownloadEngine:
                 f"bestvideo[height<={height}]+bestaudio/best[height<={height}]/best"
                 if height else "bestvideo+bestaudio/best/best"
             )
+            postprocessors = [
+                {
+                    "key": "FFmpegMetadata",
+                    "add_metadata": True,
+                },
+            ]
+            if embed_thumbnail:
+                postprocessors.append({
+                    "key": "EmbedThumbnail",
+                })
+
             options.update({
                 "format": selector,
                 "merge_output_format": "mp4",
-                "postprocessors": [
-                    {
-                        "key": "FFmpegMetadata",
-                        "add_metadata": True,
-                    },
-                ],
+                "writethumbnail": embed_thumbnail,
+                "postprocessors": postprocessors,
             })
 
         return options
