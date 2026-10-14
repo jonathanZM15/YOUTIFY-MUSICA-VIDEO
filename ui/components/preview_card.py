@@ -19,6 +19,7 @@ class PreviewCard(ctk.CTkFrame):
             border_color=Colors.BORDER,
         )
         self._thumb_img = None
+        self._request_id = 0
         self._build_ui()
 
     def _build_ui(self):
@@ -89,34 +90,52 @@ class PreviewCard(ctk.CTkFrame):
         thumbnail_url: Optional[str] = None,
         after_widget: Optional[ctk.CTkBaseClass] = None,
     ):
+        self._request_id += 1
         short_title = title if len(title) <= 65 else title[:62] + "..."
         self.title_label.configure(text=short_title)
         self.channel_badge.configure(text=f"👤 {channel}")
         self.duration_badge.configure(text=f"⏱️ {duration}")
 
         if thumbnail_url:
-            threading.Thread(target=self._fetch_and_render_thumb, args=(thumbnail_url,), daemon=True).start()
+            req_id = self._request_id
+            threading.Thread(target=self._fetch_and_render_thumb, args=(thumbnail_url, req_id), daemon=True).start()
 
         if after_widget:
             self.pack(fill="x", padx=36, pady=(0, 10), after=after_widget)
         else:
             self.pack(fill="x", padx=36, pady=(0, 10))
 
-    def _fetch_and_render_thumb(self, url: str):
+    # Límite de tamaño para miniaturas (5 MB) para evitar consumo excesivo de memoria
+    MAX_THUMB_BYTES = 5 * 1024 * 1024
+
+    def _fetch_and_render_thumb(self, url: str, req_id: int):
         try:
+            # Solo permitir URLs HTTPS para mitigar ataques SSRF a servicios internos
+            if not url.startswith("https://"):
+                return
             req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
             with urllib.request.urlopen(req, timeout=5) as resp:
-                data = resp.read()
+                data = resp.read(self.MAX_THUMB_BYTES + 1)
+            if len(data) > self.MAX_THUMB_BYTES:
+                return
             raw_img = Image.open(io.BytesIO(data))
             raw_img = raw_img.convert("RGBA").resize((96, 54), Image.LANCZOS)
-            self._thumb_img = ctk.CTkImage(light_image=raw_img, dark_image=raw_img, size=(96, 54))
-            self.after(0, lambda: self.thumb_label.configure(image=self._thumb_img, text=""))
+            thumb_img = ctk.CTkImage(light_image=raw_img, dark_image=raw_img, size=(96, 54))
+
+            def _apply_thumb():
+                if req_id == self._request_id:
+                    self._thumb_img = thumb_img
+                    self.thumb_label.configure(image=self._thumb_img, text="")
+
+            self.after(0, _apply_thumb)
         except Exception:
             pass
 
     def hide_preview(self):
+        self._request_id += 1
         self.pack_forget()
         self.title_label.configure(text="")
         self.channel_badge.configure(text="")
         self.duration_badge.configure(text="")
-        self.thumb_label.configure(image=None, text="🎬")
+        self._thumb_img = None
+        self.thumb_label.configure(image="", text="🎬")

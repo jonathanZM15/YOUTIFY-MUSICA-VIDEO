@@ -1,3 +1,4 @@
+import hashlib
 import shutil
 import tempfile
 import urllib.request
@@ -9,6 +10,7 @@ from config.settings import (
     APPDATA_FFMPEG_DIR,
     BUNDLED_FFMPEG_DIR,
     FFMPEG_DOWNLOAD_TIMEOUT_SEC,
+    FFMPEG_EXPECTED_SHA256,
     FFMPEG_OFFICIAL_URL,
 )
 
@@ -48,16 +50,32 @@ class FFmpegManager:
             log_callback("[*] FFmpeg no detectado localmente. Obteniendo componentes oficiales...")
 
         APPDATA_FFMPEG_DIR.mkdir(parents=True, exist_ok=True)
-        archive_path = Path(tempfile.gettempdir()) / "youtify_ffmpeg.zip"
+
+        # Usar archivo temporal con nombre impredecible (evita rutas fijas en %TEMP%)
+        tmp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
+        archive_path = Path(tmp_file.name)
+        tmp_file.close()
 
         try:
             req = urllib.request.Request(
                 FFMPEG_OFFICIAL_URL,
                 headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) YoutifySecurity/1.0"}
             )
+            sha256_hash = hashlib.sha256()
             with urllib.request.urlopen(req, timeout=FFMPEG_DOWNLOAD_TIMEOUT_SEC) as resp, \
                     open(archive_path, "wb") as f_out:
-                shutil.copyfileobj(resp, f_out)
+                while True:
+                    chunk = resp.read(8192)
+                    if not chunk:
+                        break
+                    f_out.write(chunk)
+                    sha256_hash.update(chunk)
+
+            # Verificación de integridad SHA-256 si se ha configurado el hash esperado
+            if FFMPEG_EXPECTED_SHA256 is not None:
+                actual_hash = sha256_hash.hexdigest()
+                if actual_hash != FFMPEG_EXPECTED_SHA256:
+                    raise RuntimeError("Fallo de integridad SHA-256 en FFmpeg")
 
             with zipfile.ZipFile(archive_path) as zf:
                 for member in zf.namelist():

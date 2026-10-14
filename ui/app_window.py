@@ -1,6 +1,5 @@
 import os
 import random
-import re
 import shutil
 import threading
 import time
@@ -15,7 +14,7 @@ from config.settings import (
     VIDEO_DIR,
 )
 from core.validator import SecurityValidator
-from core.downloader import DownloadEngine
+from core.downloader import ANSI_ESCAPE_RE, DownloadEngine, clean_ansi as _clean_text
 from core.updater import Updater
 from ui.theme import Colors
 from ui.components import (
@@ -28,22 +27,13 @@ from ui.components import (
     UpdateDialog,
 )
 
-ANSI_ESCAPE_RE = re.compile(
-    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
-)
-
-
-def _clean_text(raw: str) -> str:
-    if not raw:
-        return ""
-    return ANSI_ESCAPE_RE.sub("", str(raw)).strip()
-
 
 class AppWindow(ctk.CTk):
     """Orquestador principal de la ventana y controlador de eventos de Youtify."""
 
     _queue_total_items: int = 0
     _queue_completed_items: int = 0
+    _custom_destination: Path | None = None
 
     def __init__(self):
         super().__init__()
@@ -59,6 +49,7 @@ class AppWindow(ctk.CTk):
         self.is_downloading = False
         self._queue_total_items: int = 0
         self._queue_completed_items: int = 0
+        self._custom_destination: Path | None = None
         self._current_task = None
         self._inspect_timer = None
 
@@ -101,9 +92,7 @@ class AppWindow(ctk.CTk):
         """Verifica de forma no bloqueante si Node.js está disponible en el PATH del sistema."""
         if not shutil.which("node"):
             self.console_view.append_log(
-                "[!] Aviso: Node.js no detectado en el PATH del sistema.\n"
-                "    Para resolver desafíos antibot de YouTube y mitigar errores 403 Forbidden,\n"
-                "    se recomienda instalar Node.js LTS desde: https://nodejs.org/"
+                "[i] Modo autónomo activo (clientes móviles iOS/Android). Node.js no detectado (opcional: https://nodejs.org/)."
             )
         else:
             self.console_view.append_log("[✓] Entorno JavaScript: Node.js detectado para desafíos antibot.")
@@ -151,6 +140,22 @@ class AppWindow(ctk.CTk):
         )
         self.open_folder_btn.pack(side="right")
 
+        self.change_folder_btn = ctk.CTkButton(
+            meta_bar,
+            text="Cambiar carpeta",
+            width=115,
+            height=26,
+            font=("Segoe UI", 11),
+            fg_color="transparent",
+            text_color=Colors.TEXT_SECONDARY,
+            hover_color=Colors.CARD_BG,
+            border_width=1,
+            border_color=Colors.BORDER,
+            corner_radius=6,
+            command=self._choose_custom_folder,
+        )
+        self.change_folder_btn.pack(side="right", padx=(0, 8))
+
         # 5. Barra de acciones principales (Botones unificados)
         buttons_container = ctk.CTkFrame(self, fg_color="transparent")
         buttons_container.pack(fill="x", padx=36, pady=(2, 6))
@@ -195,12 +200,26 @@ class AppWindow(ctk.CTk):
         self._on_format_changed("MP3 (audio)")
 
     def _get_current_destination(self) -> Path:
+        if self._custom_destination is not None:
+            return self._custom_destination
         fmt = self.download_card.get_format()
         return MUSIC_DIR if fmt.startswith("MP3") else VIDEO_DIR
 
+    def _choose_custom_folder(self) -> None:
+        initial_dir = str(self._get_current_destination())
+        folder = ctk.filedialog.askdirectory(
+            title="Seleccionar carpeta de descarga",
+            initialdir=initial_dir,
+        )
+        if folder:
+            self._custom_destination = Path(folder)
+            display_name = self._custom_destination.name or str(self._custom_destination)
+            self.destination_label.configure(text=f"Destino: {display_name}")
+
     def _on_format_changed(self, selection: str) -> None:
         dest = self._get_current_destination()
-        self.destination_label.configure(text=f"Destino: {dest.name}")
+        display_name = dest.name or str(dest)
+        self.destination_label.configure(text=f"Destino: {display_name}")
 
     def _open_destination_folder(self) -> None:
         dest = self._get_current_destination()
@@ -232,11 +251,6 @@ class AppWindow(ctk.CTk):
 
     def _inspect_url_async(self, target_url: str) -> None:
         def _task():
-            current_url = self.download_card.get_url()
-            if current_url != target_url:
-                self.after(0, self.preview_card.hide_preview)
-                return
-
             meta = DownloadEngine.extract_metadata_fast(target_url)
 
             def _apply_meta():
@@ -411,25 +425,14 @@ class AppWindow(ctk.CTk):
         max_attempts = 2
         for attempt in range(1, max_attempts + 1):
             try:
-                try:
-                    self.downloader.execute_download(
-                        url=url,
-                        format_type=fmt,
-                        quality=quality,
-                        destination_dir=destination,
-                        embed_thumbnail=embed_thumbnail,
-                    )
-                except TypeError as type_err:
-                    if "embed_thumbnail" in str(type_err):
-                        self.downloader.execute_download(
-                            url=url,
-                            format_type=fmt,
-                            quality=quality,
-                            destination_dir=destination,
-                        )
-                    else:
-                        raise
-                self.after(0, self._on_single_download_success)
+                self.downloader.execute_download(
+                    url=url,
+                    format_type=fmt,
+                    quality=quality,
+                    destination_dir=destination,
+                    embed_thumbnail=embed_thumbnail,
+                )
+                self.after(0, lambda et=embed_thumbnail: self._on_single_download_success(embed_thumbnail=et))
                 return
             except Exception as error:
                 err_msg = _clean_text(str(error))
@@ -481,14 +484,17 @@ class AppWindow(ctk.CTk):
         except Exception:
             pass
 
-    def _on_single_download_success(self) -> None:
+    def _on_single_download_success(self, embed_thumbnail: bool = True) -> None:
         self._queue_completed_items += 1
         if self._queue_total_items > 0:
             overall = min(1.0, self._queue_completed_items / self._queue_total_items)
             self.progress_widget.set_progress(overall)
         else:
             self.progress_widget.set_progress(1.0)
-        self.console_view.append_log("[✓] Archivo guardado y carátula incrustada con éxito.")
+        if embed_thumbnail:
+            self.console_view.append_log("[✓] Archivo guardado y carátula incrustada con éxito.")
+        else:
+            self.console_view.append_log("[✓] Archivo guardado con éxito.")
         self._process_next_in_queue(apply_delay=True)
 
     # ── Callbacks de eventos desde el motor ───────────────────────

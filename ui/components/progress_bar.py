@@ -1,16 +1,6 @@
-import re
 import customtkinter as ctk
+from core.downloader import ANSI_ESCAPE_RE as _ANSI_RE, clean_ansi as _clean_text
 from ui.theme import Colors
-
-_ANSI_RE = re.compile(
-    r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])|\x1b\[[0-9;]*[a-zA-Z]|\x1b\[[0-9;]*m"
-)
-
-
-def _clean_text(val: str) -> str:
-    if not val:
-        return ""
-    return _ANSI_RE.sub("", str(val)).strip()
 
 
 class ProgressBarWidget(ctk.CTkFrame):

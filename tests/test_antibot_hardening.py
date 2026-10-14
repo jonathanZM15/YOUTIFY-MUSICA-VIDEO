@@ -95,8 +95,14 @@ class TestAntibotHardening(unittest.TestCase):
 
             # Debe haber ejecutado 2 intentos
             self.assertEqual(call_count, 2)
-            # Debe haber notificado éxito
-            self.app.after.assert_called_with(0, self.app._on_single_download_success)
+            # Debe haber notificado éxito a través de una lambda que invoca _on_single_download_success
+            last_after_call = self.app.after.call_args
+            self.assertEqual(last_after_call[0][0], 0)
+            success_callback = last_after_call[0][1]
+            # Ejecutar el callback para verificar que invoca _on_single_download_success
+            with patch.object(self.app, "_on_single_download_success") as mock_success:
+                success_callback()
+                mock_success.assert_called_once()
 
     def test_403_permanent_failure_continues_queue(self):
         # Simular error 403 persistente en ambos intentos

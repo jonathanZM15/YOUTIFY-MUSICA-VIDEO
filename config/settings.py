@@ -1,10 +1,11 @@
 import os
 import sys
 from pathlib import Path
+from typing import Optional
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.0.9"
+APP_VERSION = "1.1.0"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)
@@ -40,6 +41,11 @@ FFMPEG_OFFICIAL_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
     "latest/ffmpeg-master-latest-win64-gpl.zip"
 )
+
+# Hash SHA-256 esperado del archivo ZIP de FFmpeg para verificación de integridad.
+# Establecer a None deshabilita la verificación (por defecto).
+# Ejemplo: "a1b2c3d4e5..." (hash hexadecimal de 64 caracteres)
+FFMPEG_EXPECTED_SHA256: Optional[str] = None
 
 # Integración con GitHub Releases (Actualizaciones automáticas)
 GITHUB_REPO = "jonathanZM15/YOUTIFY-MUSICA-VIDEO"

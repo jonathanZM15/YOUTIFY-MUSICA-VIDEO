@@ -3,7 +3,7 @@
 ![Python](https://img.shields.io/badge/Python-3.12+-blue.svg)
 ![CustomTkinter](https://img.shields.io/badge/GUI-CustomTkinter-brightgreen)
 ![yt-dlp](https://img.shields.io/badge/Powered_by-yt--dlp-red)
-![Version](https://img.shields.io/badge/Version-v1.0.7-blue)
+![Version](https://img.shields.io/badge/Version-v1.1.0-blue)
 ![License](https://img.shields.io/badge/License-MIT-yellow.svg)
 
 Una aplicación de escritorio moderna, ligera, elegante y open source para descargar
@@ -131,10 +131,10 @@ El workflow de GitHub Actions en `.github/workflows/build-release.yml` compila y
 
 ```powershell
 git add .
-git commit -m "feat: preparar release v1.0.7"
-git tag v1.0.7
+git commit -m "feat: preparar release v1.1.0"
+git tag v1.1.0
 git push origin main
-git push origin v1.0.7
+git push origin v1.1.0
 ```
 
 ---

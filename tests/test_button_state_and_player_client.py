@@ -167,7 +167,13 @@ class TestButtonStateAndPlayerClient(unittest.TestCase):
 
             mock_sleep.assert_called_once()
             self.assertEqual(attempts, 2)
-            self.app.after.assert_called_with(0, self.app._on_single_download_success)
+            # Debe haber notificado éxito a través de una lambda que invoca _on_single_download_success
+            last_after_call = self.app.after.call_args
+            self.assertEqual(last_after_call[0][0], 0)
+            success_callback = last_after_call[0][1]
+            with patch.object(self.app, "_on_single_download_success") as mock_success:
+                success_callback()
+                mock_success.assert_called_once()
 
 
 if __name__ == "__main__":

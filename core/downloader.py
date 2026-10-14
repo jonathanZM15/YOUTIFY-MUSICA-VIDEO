@@ -2,6 +2,7 @@ import gc
 import re
 import shutil
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -114,17 +115,21 @@ class ThumbnailOptimizerPP(PostProcessor):
         super().__init__(downloader)
         self.max_dimension = max_dimension
         self.quality = quality
+        # Registro de rutas de miniaturas creadas para limpieza segura posterior
+        self.created_thumbnails: set[Path] = set()
 
     def run(self, info: dict):
         thumbnails = info.get("thumbnails") or []
         for thumb in thumbnails:
             filepath = thumb.get("filepath")
             if filepath and Path(filepath).exists():
+                self.created_thumbnails.add(Path(filepath))
                 optimized_path = optimize_thumbnail(
                     Path(filepath),
                     max_dimension=self.max_dimension,
                     quality=self.quality,
                 )
+                self.created_thumbnails.add(optimized_path)
                 str_opt = str(optimized_path)
                 thumb["filepath"] = str_opt
                 if "__files_to_move" in info and filepath in info["__files_to_move"]:
@@ -209,6 +214,17 @@ class DownloadEngine:
         if not url or ("list=" not in url and "playlist" not in url):
             return []
 
+        # Filtrar radios o mixes autogenerados de YouTube (ej. /watch?v=...&list=RD...)
+        # para descargar solo la pista elegida por el usuario
+        try:
+            parsed = urllib.parse.urlparse(url)
+            qs = urllib.parse.parse_qs(parsed.query)
+            list_param = qs.get("list", [""])[0]
+            if parsed.path.rstrip("/") == "/watch" and "v" in qs and list_param.startswith("RD"):
+                return []
+        except Exception:
+            pass
+
         from yt_dlp import YoutubeDL
         opts = {
             "extract_flat": "in_playlist",
@@ -216,6 +232,7 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 8,
+            "playlistend": 100,
             "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
         }
         if shutil.which("node"):
@@ -320,6 +337,7 @@ class DownloadEngine:
         if self.on_status:
             self.on_status("connecting", "Conectando con servidores...")
 
+        optimizer = None
         try:
             with YoutubeDL(options) as downloader:
                 if embed_thumbnail:
@@ -339,11 +357,12 @@ class DownloadEngine:
                         downloader._pps["post_process"].append(optimizer)
 
                 downloader.download([url])
-            # Limpieza de imágenes sueltas que yt-dlp pueda haber dejado
-            for ext in ("*.webp", "*.jpg", "*.png", "*.jpeg"):
-                for leftover in destination_dir.glob(ext):
+            # Limpieza segura: eliminar solo las miniaturas registradas por ThumbnailOptimizerPP
+            if embed_thumbnail and optimizer is not None:
+                for thumb_path in optimizer.created_thumbnails:
                     try:
-                        leftover.unlink(missing_ok=True)
+                        if thumb_path.exists():
+                            thumb_path.unlink(missing_ok=True)
                     except Exception:
                         pass
         finally:
@@ -452,6 +471,16 @@ class DownloadEngine:
                 self.on_progress(numeric_progress, pct_str, speed_str, eta_str)
 
         elif status == "finished":
+            # Ajustar dinámicamente el conteo de streams si info_dict revela un stream único
+            if not self.is_audio:
+                info_dict = data.get("info_dict") or {}
+                req_fmts = info_dict.get("requested_formats")
+                if req_fmts is not None:
+                    self._expected_stream_count = max(1, len(req_fmts))
+                elif self._stream_phase_index == 0 and self._expected_stream_count > 1:
+                    # Sin requested_formats: stream progresivo único
+                    self._expected_stream_count = 1
+
             if self.is_audio or self._expected_stream_count == 1:
                 self._last_progress_value = 1.0
                 self._log("[*] Conversión y etiquetado ID3 de metadatos con FFmpeg...")
@@ -461,18 +490,18 @@ class DownloadEngine:
                     self.on_progress(1.0, "100.0%", "—", "")
             else:
                 # Video multi-stream: verificar qué stream acaba de finalizar
-                if self._stream_phase_index == 0:
+                if self._stream_phase_index + 1 < self._expected_stream_count:
                     # Cerrar fase de video sin reiniciar barra visual
                     self._phase_offset_bytes += self._phase_last_bytes
                     self._phase_last_bytes = 0
-                    self._stream_phase_index = 1
+                    self._stream_phase_index += 1
                     self._current_stream_id = None
                     self._log("[+] Stream de video completado. Descargando pista de audio...")
                     if self.on_progress:
                         pct_str = f"{self._last_progress_value * 100:.1f}%"
                         self.on_progress(self._last_progress_value, pct_str, "—", "")
                 else:
-                    # Finalizaron ambos streams
+                    # Finalizaron todos los streams
                     self._last_progress_value = 1.0
                     self._log("[*] Fusión de video y audio en MP4 con FFmpeg...")
                     if self.on_status:
@@ -491,7 +520,7 @@ class DownloadEngine:
         options = {
             "outtmpl": str(destination / "%(title)s.%(ext)s"),
             "windowsfilenames": True,
-            "restrictfilenames": True,
+            "restrictfilenames": False,
             "noplaylist": True,
             "retries": 10,
             "fragment_retries": 10,

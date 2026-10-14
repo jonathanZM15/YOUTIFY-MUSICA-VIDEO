@@ -32,6 +32,9 @@ class ReleaseInfo:
 class Updater:
     """Gestor de ciclo de vida y actualizaciones: GitHub Releases y motor yt-dlp."""
 
+    # Lock para proteger acceso concurrente a update_state.json
+    _state_lock = threading.Lock()
+
     @staticmethod
     def parse_version(v_str: str) -> tuple[int, ...]:
         """Extrae tupla numérica de versión semántica (ej. 'v1.0.7' -> (1, 0, 7))."""
@@ -44,7 +47,7 @@ class Updater:
         return cls.parse_version(remote_tag) > cls.parse_version(current_version)
 
     @classmethod
-    def _read_update_state(cls) -> dict:
+    def _load_state(cls) -> dict:
         try:
             if UPDATE_STATE_FILE.exists():
                 with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
@@ -54,13 +57,32 @@ class Updater:
         return {}
 
     @classmethod
-    def _write_update_state(cls, data: dict) -> None:
+    def _save_state(cls, data: dict) -> None:
         try:
             UPDATE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
             with open(UPDATE_STATE_FILE, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
         except Exception:
             pass
+
+    @classmethod
+    def _read_update_state(cls) -> dict:
+        with cls._state_lock:
+            return cls._load_state()
+
+    @classmethod
+    def _write_update_state(cls, data: dict) -> None:
+        with cls._state_lock:
+            cls._save_state(data)
+
+    @classmethod
+    def _update_state(cls, **updates) -> dict:
+        """Adquiere el lock, lee el estado en disco, aplica updates, guarda y retorna el estado."""
+        with cls._state_lock:
+            state = cls._load_state()
+            state.update(updates)
+            cls._save_state(state)
+            return state
 
     @classmethod
     def should_notify(cls, remote_tag: str) -> bool:
@@ -77,10 +99,10 @@ class Updater:
     @classmethod
     def postpone_update(cls, remote_tag: str, hours: int = 24) -> None:
         """Pospone el aviso para recordar al usuario más tarde (por defecto 24 horas)."""
-        state = cls._read_update_state()
-        state["postponed_until"] = time.time() + (hours * 3600)
-        state["postponed_tag"] = remote_tag
-        cls._write_update_state(state)
+        cls._update_state(
+            postponed_until=time.time() + (hours * 3600),
+            postponed_tag=remote_tag,
+        )
 
     @classmethod
     def check_github_release(cls) -> Optional[ReleaseInfo]:
@@ -189,14 +211,12 @@ class Updater:
                             current_ver = getattr(yt_dlp.version, "__version__", current_ver)
                         except Exception:
                             pass
-                        state["yt_dlp_last_updated"] = now_str
-                        cls._write_update_state(state)
+                        cls._update_state(yt_dlp_last_updated=now_str)
                         if log_callback:
                             log_callback(f"[*] yt-dlp actualizado a la versión más reciente ({current_ver}) el {now_str}.")
                     else:
                         if not last_updated:
-                            state["yt_dlp_last_updated"] = now_str
-                            cls._write_update_state(state)
+                            cls._update_state(yt_dlp_last_updated=now_str)
                         if log_callback:
                             log_callback(f"[*] yt-dlp verificado: ya se encuentra en la versión más reciente ({current_ver}).")
             except Exception:

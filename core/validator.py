@@ -21,6 +21,10 @@ class SecurityValidator:
             if parsed.scheme not in ("http", "https"):
                 return False
 
+            # Rechazar URLs con credenciales incrustadas (user:pass@host)
+            if parsed.username or parsed.password:
+                return False
+
             host = (parsed.hostname or "").lower()
             if not host:
                 return False

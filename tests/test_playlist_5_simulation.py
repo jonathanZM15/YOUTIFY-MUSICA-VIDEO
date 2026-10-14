@@ -73,9 +73,14 @@ class TestPlaylist5Simulation(unittest.TestCase):
                 # Ejecutar worker de Video 1
                 thread_target(*thread_args)
 
-                # Verificar que completó y llamó a _on_single_download_success
-                # En fake_after se habrá programado _on_single_download_success
-                self.assertTrue(any(fn == app._on_single_download_success for _, fn in delays_recorded))
+                # Verificar que completó y llamó a _on_single_download_success (envuelta en lambda)
+                # Encontrar el callback de éxito entre los registrados (delay=0)
+                success_callbacks = [fn for d, fn in delays_recorded if d == 0]
+                self.assertTrue(len(success_callbacks) > 0, "No se programó callback de éxito")
+                # Verificar que al invocar el callback, se ejecuta _on_single_download_success
+                with patch.object(app, "_on_single_download_success") as mock_success:
+                    success_callbacks[-1]()
+                    mock_success.assert_called_once()
 
                 # Ejecutar _on_single_download_success
                 delays_recorded.clear()
