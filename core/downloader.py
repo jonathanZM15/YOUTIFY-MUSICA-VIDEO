@@ -36,7 +36,6 @@ from core.ffmpeg_manager import FFmpegManager
 from core.runtime import javascript_options
 from core.validator import SecurityValidator
 from PIL import Image
-from yt_dlp.postprocessor import PostProcessor
 
 class DownloadCancelled(Exception):
     """Cancellation is a separate result, never a successful download."""
@@ -116,38 +115,11 @@ def optimize_thumbnail(
         return thumb_path
 
 
-class ThumbnailOptimizerPP(PostProcessor):
-    """Postprocesador que intercepta la miniatura descargada y la optimiza con Pillow antes de incrustarla."""
-
-    def __init__(
-        self,
-        downloader=None,
-        max_dimension: int = THUMBNAIL_MAX_DIMENSION,
-        quality: int = THUMBNAIL_JPEG_QUALITY,
-    ):
-        super().__init__(downloader)
-        self.max_dimension = max_dimension
-        self.quality = quality
-        # Registro de rutas de miniaturas creadas para limpieza segura posterior
-        self.created_thumbnails: set[Path] = set()
-
-    def run(self, info: dict):
-        thumbnails = info.get("thumbnails") or []
-        for thumb in thumbnails:
-            filepath = thumb.get("filepath")
-            if filepath and Path(filepath).exists():
-                self.created_thumbnails.add(Path(filepath))
-                optimized_path = optimize_thumbnail(
-                    Path(filepath),
-                    max_dimension=self.max_dimension,
-                    quality=self.quality,
-                )
-                self.created_thumbnails.add(optimized_path)
-                str_opt = str(optimized_path)
-                thumb["filepath"] = str_opt
-                if "__files_to_move" in info and filepath in info["__files_to_move"]:
-                    info["__files_to_move"][str_opt] = info["__files_to_move"].pop(filepath)
-        return [], info
+def __getattr__(name):
+    if name == "ThumbnailOptimizerPP":
+        from core.thumbnail import ThumbnailOptimizerPP
+        return ThumbnailOptimizerPP
+    raise AttributeError(name)
 
 
 
@@ -350,6 +322,7 @@ class DownloadEngine:
         try:
             with YoutubeDL(options) as downloader:
                 if embed_thumbnail:
+                    from core.thumbnail import ThumbnailOptimizerPP
                     optimizer = ThumbnailOptimizerPP(
                         downloader,
                         max_dimension=THUMBNAIL_MAX_DIMENSION,

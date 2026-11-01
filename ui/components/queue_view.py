@@ -1,5 +1,5 @@
 from pathlib import Path
-import os
+import tkinter as tk
 import customtkinter as ctk
 from ui.theme import Colors
 
@@ -26,6 +26,7 @@ class QueueView(ctk.CTkFrame):
         self.page = 0
         self._jobs = []
         self._active = None
+        self._pager_state = None
         pager = ctk.CTkFrame(self, fg_color="transparent")
         pager.pack(fill="x", padx=8, pady=(4, 0))
         self.page_label = ctk.CTkLabel(pager, text="", font=("Segoe UI", 10), text_color=Colors.TEXT_MUTED)
@@ -52,21 +53,24 @@ class QueueView(ctk.CTkFrame):
 
     def render(self, jobs):
         self._jobs = jobs
-        self.list._scrollbar.configure(button_color=Colors.BORDER if jobs else Colors.CARD_BG)
+        if bool(jobs) != getattr(self, '_has_jobs', None):
+            self._has_jobs = bool(jobs)
+            self.list._scrollbar.configure(button_color=Colors.BORDER if jobs else Colors.CARD_BG)
+            if jobs: self.empty.grid_remove()
+            else: self.empty.grid()
         active = next((i for i, job in enumerate(jobs) if job["status"] in {"downloading", "converting"}), None)
         if active is not None and jobs[active]["id"] != self._active:
             self.page = active // 25
             self._active = jobs[active]["id"]
         pages = max(1, (len(jobs) + 24) // 25)
         self.page = max(0, min(self.page, pages - 1))
-        self.page_label.configure(text=f"Página {self.page + 1} de {pages}" if jobs else "")
-        self.prev_btn.configure(state="normal" if self.page > 0 else "disabled")
-        self.next_btn.configure(state="normal" if self.page + 1 < pages else "disabled")
+        pager_state = (self.page, pages, bool(jobs))
+        if pager_state != self._pager_state:
+            self._pager_state = pager_state
+            self.page_label.configure(text=f"Página {self.page + 1} de {pages}" if jobs else "")
+            self.prev_btn.configure(state="normal" if self.page > 0 else "disabled")
+            self.next_btn.configure(state="normal" if self.page + 1 < pages else "disabled")
         jobs = jobs[self.page * 25:(self.page + 1) * 25]
-        if jobs:
-            self.empty.grid_remove()
-        else:
-            self.empty.grid()
         ids = {job["id"] for job in jobs}
         for key in list(self.rows):
             if key not in ids:
@@ -80,25 +84,35 @@ class QueueView(ctk.CTkFrame):
                     width=44, height=40, corner_radius=7, fg_color=Colors.BTN_SECONDARY_BG,
                     text_color=Colors.TEXT_BRAND, font=("Segoe UI", 10, "bold"))
                 badge.grid(row=0, column=0, rowspan=2, padx=12, pady=12)
-                title = ctk.CTkLabel(frame, text="", width=1, anchor="w", font=("Segoe UI", 12, "bold"), text_color=Colors.TEXT_PRIMARY)
+                def make_label(font):
+                    return tk.Label(frame, text="", width=1, height=1, anchor="w", borderwidth=0,
+                        padx=0, pady=0, font=self._apply_font_scaling(font),
+                        background=self._apply_appearance_mode(Colors.INPUT_BG))
+                title = make_label(("Segoe UI",12,"bold"))
                 title.grid(row=0, column=1, sticky="ew", pady=(9, 0))
-                detail = ctk.CTkLabel(frame, text="", width=1, anchor="w", font=("Segoe UI", 10), text_color=Colors.TEXT_MUTED)
+                detail = make_label(("Segoe UI",10))
                 detail.grid(row=1, column=1, sticky="ew", pady=(0, 9))
-                status = ctk.CTkLabel(frame, text="", width=108, font=("Segoe UI", 11))
-                status.grid(row=0, column=2, rowspan=2, padx=10)
+                status = make_label(("Segoe UI",11))
+                frame.grid_columnconfigure(2, minsize=self._apply_widget_scaling(108))
+                status.grid(row=0, column=2, rowspan=2, padx=10, sticky="ew")
                 button = ctk.CTkButton(frame, text="", width=86, height=28, fg_color=Colors.BTN_SECONDARY_BG,
                     hover_color=Colors.BTN_SECONDARY_HOVER, text_color=Colors.BTN_SECONDARY_TEXT, font=("Segoe UI", 10))
                 button.grid(row=0, column=3, rowspan=2, padx=(0, 12))
                 self.rows[key] = dict(frame=frame, title=title, detail=detail, status=status, button=button)
             row = self.rows[key]
-            row["frame"].grid(row=index + 1, column=0, sticky="ew", pady=(0, 6), padx=2)
+            signature = (index, job['title'], job['error'], job['quality'], job['destination'], job['status'], job.get('filepath'))
+            if row.get('_signature') == signature: continue
+            if row.get('_index') != index:
+                row["frame"].grid(row=index + 1, column=0, sticky="ew", pady=(0, 6), padx=2)
+                row['_index'] = index
+            row['_signature'], row['_job'] = signature, job
             title = job["title"]
             # Truncation keeps a very long remote title from stretching the window.
             row["title"].configure(text=title[:64] + ("…" if len(title) > 64 else ""))
             detail = job["error"].splitlines()[0] if job["error"] else f'{job["quality"]}   ·   {Path(job["destination"]).name}'
-            row["detail"].configure(text=detail[:90], text_color=Colors.ERROR if job["error"] else Colors.TEXT_MUTED)
-            label, color = STATUS.get(job["status"], STATUS["pending"])
-            row["status"].configure(text=label, text_color=color)
+            row["detail"].configure(text=detail[:90])
+            row["status"].configure(text=STATUS.get(job["status"], STATUS["pending"])[0])
+            self._style_row(row)
             if job["status"] == "completed":
                 text, action = "Abrir", lambda j=job: self.actions[2](j)
             elif job["status"] in {"failed", "cancelled"}:
@@ -106,3 +120,23 @@ class QueueView(ctk.CTkFrame):
             else:
                 text, action = "Cancelar", lambda jid=key: self.actions[0](jid)
             row["button"].configure(text=text, command=action)
+
+    def _style_row(self, row):
+        job = row['_job']
+        background = self._apply_appearance_mode(Colors.INPUT_BG)
+        for key, color in [('title',Colors.TEXT_PRIMARY),
+                ('detail',Colors.ERROR if job['error'] else Colors.TEXT_MUTED),
+                ('status',STATUS.get(job['status'],STATUS['pending'])[1])]:
+            row[key].configure(background=background, foreground=self._apply_appearance_mode(color))
+
+    def _set_appearance_mode(self, mode):
+        super()._set_appearance_mode(mode)
+        for row in getattr(self,'rows',{}).values():
+            if '_job' in row: self._style_row(row)
+
+    def _set_scaling(self, *args):
+        super()._set_scaling(*args)
+        for row in getattr(self,'rows',{}).values():
+            for key,font in [('title',('Segoe UI',12,'bold')),('detail',('Segoe UI',10)),('status',('Segoe UI',11))]:
+                row[key].configure(font=self._apply_font_scaling(font))
+            row['frame'].grid_columnconfigure(2,minsize=self._apply_widget_scaling(108))

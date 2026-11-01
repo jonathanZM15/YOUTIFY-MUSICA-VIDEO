@@ -1,8 +1,8 @@
 """Sequential, recoverable download queue independent from Tk and its main thread."""
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 import logging
 from pathlib import Path
-from queue import Queue, Empty
+from queue import Queue
 import threading
 import time
 from urllib.parse import urlparse, parse_qs
@@ -86,7 +86,9 @@ class DownloadManager:
 
     def snapshot(self):
         with self._condition:
-            return [asdict(job) for job in self.jobs]
+            # Job fields are scalar values. Avoid dataclasses.asdict's recursive
+            # deepcopy on every state change and every user action.
+            return [vars(job).copy() for job in self.jobs]
 
     def _ensure_playlist(self, job):
         job.playlist_id = job.playlist_id or job.id
@@ -188,12 +190,13 @@ class DownloadManager:
         return next((j for j in self.jobs if j.id == job_id), None)
 
     def _resolve_loop(self):
-        while not self._closed:
-            try:
-                job_id = self._resolutions.get(timeout=0.3)
-            except Empty:
-                continue
+        while True:
+            job_id = self._resolutions.get()
+            if job_id is None:
+                return
             with self._condition:
+                if self._closed:
+                    return
                 job = self._find(job_id)
                 if not job or job.status != "resolving":
                     continue
@@ -230,11 +233,13 @@ class DownloadManager:
 
     def resume(self):
         with self._condition:
+            if not self.paused or self._closed: return
             self.paused = False
             self._changed()
 
     def pause(self):
         with self._condition:
+            if self.paused or self._closed: return
             self.paused = True
             self._changed()
 
@@ -262,7 +267,9 @@ class DownloadManager:
 
     def clear_finished(self):
         with self._condition:
-            self._retire([job for job in self.jobs if job.status in FINISHED and job.id != self._active_id])
+            finished = [job for job in self.jobs if job.status in FINISHED and job.id != self._active_id]
+            if not finished or self._closed: return
+            self._retire(finished)
             self.jobs = [job for job in self.jobs if job.status not in FINISHED or job.id == self._active_id]
             self._changed()
 
@@ -349,7 +356,10 @@ class DownloadManager:
 
     def close(self):
         with self._condition:
+            if self._closed:
+                return
             self._closed = True
+            self._resolutions.put(None)
             self.paused = True
             if self._engine:
                 self._engine.cancel()

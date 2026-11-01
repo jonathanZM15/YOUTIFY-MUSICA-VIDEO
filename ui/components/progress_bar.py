@@ -29,16 +29,27 @@ class ProgressBarWidget(ctk.CTkFrame):
             progress_color=Colors.PRIMARY, fg_color=Colors.INPUT_BG)
         self.playlist_bar.set(0)
         self.playlist_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
+        self._file_value = 0
+        self._playlist_state = None
+        self._playlist_visible = False
 
     def set_progress(self, value):
+        value = min(1, max(0, value))
+        if value == self._file_value: return
+        self._file_value = value
         self.progress_bar.set(value)
         self.percent.configure(text=f"{round(value * 100)} % del archivo")
 
     def set_playlist_progress(self, progress):
+        if progress == self._playlist_state: return
+        self._playlist_state = progress.copy() if progress is not None else None
         if progress is None:
             self.playlist_panel.grid_remove()
+            self._playlist_visible = False
             return
-        self.playlist_panel.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 12))
+        if not self._playlist_visible:
+            self.playlist_panel.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 12))
+            self._playlist_visible = True
         total = progress["total"]
         failed, cancelled = progress["failed"], progress["cancelled"]
         value = progress["value"]

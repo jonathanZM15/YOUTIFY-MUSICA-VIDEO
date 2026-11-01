@@ -2,6 +2,22 @@
 
 Novedades de Youtify. Los instaladores publicados están en [GitHub Releases](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases).
 
+## 1.3.5
+
+* Menor tiempo de arranque y uso de memoria: yt-dlp y su postprocesador de
+  carátulas se cargan al consultar o descargar contenido, en lugar de al abrir.
+* Menos actividad en reposo: el lector de playlists espera trabajo sin sondeos,
+  se espacian las comprobaciones de tema/DPI y la interfaz adapta su frecuencia
+  de consulta cuando no recibe eventos.
+* Menús más ligeros con el mismo diseño redondeado y manejo por ratón/teclado.
+  La cola reutiliza las filas sin cambios y reduce el coste de cambiar de tema.
+* Registro de actividad por lotes, limitado a 500 líneas y sin consultas
+  periódicas de sus barras de desplazamiento cuando está oculto.
+* Se evitan escrituras de preferencias, pausas y limpiezas sin cambios, así como
+  copias recursivas y redibujados innecesarios del progreso.
+* Herramienta reproducible de medición con perfiles temporales y nuevas pruebas
+  de arranque sin yt-dlp, cierre de trabajadores y actualización de widgets.
+
 ## 1.3.4
 
 * La compilación en GitHub reutiliza Inno Setup cuando ya está instalado en el

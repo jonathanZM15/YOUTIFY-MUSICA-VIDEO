@@ -38,10 +38,12 @@ class SelectMenu(ctk.CTkFrame):
         self._state = "normal"
         self._popup = None
         self._rows = []
+        self._menu_canvas = None
         self._root_binding = None
         self._focus_check = None
         self._dpi_close = None
         self._focused = self._hovered = False
+        self._painted = None
         self._base_color = fg_color
         super().__init__(master, width=width, height=height, corner_radius=9,
             border_width=1, border_color=Colors.BORDER_INPUT, fg_color=fg_color, cursor="hand2")
@@ -113,8 +115,11 @@ class SelectMenu(ctk.CTkFrame):
 
     def _paint(self):
         active = self._focused or self._popup is not None
-        super().configure(border_color=Colors.BORDER_FOCUS if active else Colors.BORDER_INPUT,
-            fg_color=Colors.CARD_HOVER if self._hovered and self._state != "disabled" else self._base_color)
+        style = (Colors.BORDER_FOCUS if active else Colors.BORDER_INPUT,
+            Colors.CARD_HOVER if self._hovered and self._state != "disabled" else self._base_color)
+        if style != self._painted:
+            self._painted = style
+            super().configure(border_color=style[0], fg_color=style[1])
 
     def _open_key(self, event):
         self.open()
@@ -160,24 +165,33 @@ class SelectMenu(ctk.CTkFrame):
             border_color=Colors.BORDER, fg_color=Colors.CARD_BG)
         panel.pack(fill="both", expand=True)
         self._rows = []
+        # One native canvas instead of a frame + label + drawing canvas for
+        # every item. Keep the rounded panel and keyboard behavior unchanged.
+        self._row_height = round(self._apply_widget_scaling(34))
+        menu_width = max(round(self._apply_widget_scaling(90)), self.winfo_width()-round(self._apply_widget_scaling(12)))
+        canvas = self._menu_canvas = tk.Canvas(panel, width=menu_width,
+            height=self._row_height*len(self._values), borderwidth=0, highlightthickness=0,
+            background=self._apply_appearance_mode(Colors.CARD_BG), cursor="hand2")
+        canvas.pack(padx=6, pady=6)
+        inset = round(self._apply_widget_scaling(7))
         for index, value in enumerate(self._values):
-            selected = value == self._value
-            row = ctk.CTkFrame(panel,
-                width=max(90, self._reverse_widget_scaling(self.winfo_width())-12), height=32,
-                corner_radius=7, border_width=0, cursor="hand2",
-                fg_color=Colors.STATUS_ACTIVE_FG if selected else "transparent")
-            row.pack(fill="x", padx=6, pady=(6 if index == 0 else 1, 6 if index == len(self._values)-1 else 1))
-            row.pack_propagate(False)
-            label = ctk.CTkLabel(row, text=("✓   " if selected else "     ")+value, anchor="w",
-                height=20, font=("Segoe UI", 12), cursor="hand2",
-                text_color=Colors.TEXT_BRAND if selected else Colors.TEXT_PRIMARY)
-            label.pack(fill="both", expand=True, padx=8)
-            for widget in (row, label):
-                widget.bind("<Enter>", lambda event,i=index:self._highlight(i), add="+")
-                widget.bind("<ButtonPress-1>", lambda event:"break", add="+")
-                widget.bind("<ButtonRelease-1>", lambda event,i=index:self._release_row(event,i), add="+")
-            self._rows.append(row)
+            y = index*self._row_height
+            radius = inset
+            background = canvas.create_polygon(
+                radius,y,menu_width-radius,y,menu_width,y,menu_width,y+radius,
+                menu_width,y+self._row_height-2-radius,menu_width,y+self._row_height-2,
+                menu_width-radius,y+self._row_height-2,radius,y+self._row_height-2,
+                0,y+self._row_height-2,0,y+self._row_height-2-radius,0,y+radius,0,y,
+                smooth=True, splinesteps=16, outline="")
+            text = canvas.create_text(inset,y+self._row_height/2,
+                anchor="w", text=("✓   " if value == self._value else "     ")+value,
+                font=self._apply_font_scaling(("Segoe UI",12)))
+            self._rows.append((background,text))
+        canvas.bind('<Motion>', self._menu_motion)
+        canvas.bind('<ButtonPress-1>', lambda event:'break')
+        canvas.bind('<ButtonRelease-1>', self._release_canvas)
         self._active_index = self._values.index(self._value)
+        self._highlight(self._active_index)
         popup.update_idletasks()
         width = max(self.winfo_width(), popup.winfo_reqwidth())
         height = popup.winfo_reqheight()
@@ -234,11 +248,19 @@ class SelectMenu(ctk.CTkFrame):
             self.close()
 
     def _highlight(self, index):
+        if index == getattr(self, '_highlighted_index', None): return 'break'
         self._active_index = index
-        for i, row in enumerate(self._rows):
+        self._highlighted_index = index
+        for i, (background, text) in enumerate(self._rows):
             selected = self._values[i] == self._value
-            row.configure(fg_color=Colors.STATUS_ACTIVE_FG if selected else Colors.CARD_HOVER if i == index else "transparent")
+            color = Colors.STATUS_ACTIVE_FG if selected else Colors.CARD_HOVER if i == index else Colors.CARD_BG
+            self._menu_canvas.itemconfigure(background, fill=self._apply_appearance_mode(color))
+            self._menu_canvas.itemconfigure(text, fill=self._apply_appearance_mode(Colors.TEXT_BRAND if selected else Colors.TEXT_PRIMARY))
         return "break"
+
+    def _menu_motion(self, event):
+        index = int(event.y // self._row_height)
+        if 0 <= index < len(self._values): self._highlight(index)
 
     def _move(self, direction):
         return self._highlight((self._active_index+direction) % len(self._values))
@@ -250,10 +272,9 @@ class SelectMenu(ctk.CTkFrame):
         if self._command: self._command(value)
         return "break"
 
-    def _release_row(self, event, index):
-        row = self._rows[index]
-        if row.winfo_rootx() <= event.x_root < row.winfo_rootx()+row.winfo_width() and \
-                row.winfo_rooty() <= event.y_root < row.winfo_rooty()+row.winfo_height():
+    def _release_canvas(self, event):
+        index = int(event.y // self._row_height)
+        if 0 <= event.x < self._menu_canvas.winfo_width() and 0 <= index < len(self._values):
             self._select(index)
         return "break"
 
@@ -286,6 +307,8 @@ class SelectMenu(ctk.CTkFrame):
         ctk.ScalingTracker.remove_window(None, popup)
         ctk.ScalingTracker.window_dpi_scaling_dict.pop(popup, None)
         self._rows = []
+        self._menu_canvas = None
+        self._highlighted_index = None
         self._arrow.configure(image=self._down_image)
         self._leave(None)
         if restore_focus: self.focus_set()

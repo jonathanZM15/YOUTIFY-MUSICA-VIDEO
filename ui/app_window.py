@@ -15,6 +15,7 @@ from core.download_manager import DownloadManager, ACTIVE, FINISHED
 from core.updater import Updater
 from core.runtime import javascript_options
 from ui.theme import Colors
+from ui.runtime import configure_runtime
 from ui.components import Header, DownloadCard, PreviewCard, ConsoleView, ProgressBarWidget, ModalDialog
 from ui.components.queue_view import QueueView
 
@@ -22,6 +23,7 @@ from ui.components.queue_view import QueueView
 class AppWindow(ctk.CTk):
     """All widgets are accessed on the Tk thread; workers send data through a queue."""
     def __init__(self):
+        configure_runtime()
         super().__init__()
         self._closing = False
         self._events = Queue(maxsize=500)
@@ -39,9 +41,11 @@ class AppWindow(ctk.CTk):
         self._last_finished = None
         self._render_revision = 0
         self._update_banner = None
+        self._idle_polls = 0
         self._preferences = JsonStore(PREFERENCES_FILE)
         prefs = self._preferences.read({})
         self.prefs = prefs if isinstance(prefs, dict) else {}
+        self._saved_prefs = self.prefs.copy()
         self._custom_destination = Path(self.prefs["destination"]) if isinstance(self.prefs.get("destination"), str) and self.prefs["destination"] else None
         self.title(APP_NAME)
         scale = self._get_window_scaling()
@@ -62,7 +66,7 @@ class AppWindow(ctk.CTk):
         self._build_layout()
         self.manager = DownloadManager(self._emit)
         self._render_queue(self.manager.queue_state())
-        self.after(60, self._drain_events)
+        self.after(100, self._drain_events)
         self.after(1500, self._check_app_updates)
         Updater.check_and_update_async(log_callback=lambda msg: self._emit("log", msg))
         runtime = javascript_options()["js_runtimes"]
@@ -189,17 +193,22 @@ class AppWindow(ctk.CTk):
         with self._state_lock:
             latest_queue, latest_progress = self._pending_queue, self._pending_progress
             self._pending_queue = self._pending_progress = None
+        activity = latest_queue is not None or latest_progress is not None
         for _ in range(10):
             try: callback = self._calls.get_nowait()
             except Empty: break
+            activity = True
             try:
                 callback()
             except Exception:
                 logging.getLogger(__name__).exception("Error al aplicar una respuesta de segundo plano")
+        logs = []
         for _ in range(150):
             try: kind, data = self._events.get_nowait()
             except Empty: break
-            if kind == "log": self.console_view.append_log(data)
+            activity = True
+            if kind == "log": logs.append(data)
+        if logs: self.console_view.append_logs(logs)
         if latest_queue is not None: self._render_queue(latest_queue)
         if latest_progress is not None:
             job = next((j for j in self._last_jobs if j["id"] == latest_progress["id"]), None)
@@ -209,7 +218,8 @@ class AppWindow(ctk.CTk):
                 self.progress_widget.set_playlist_progress(latest_progress.get("playlist"))
                 speed, eta = latest_progress["speed"], latest_progress["eta"]
                 self.progress_widget.detail.configure(text=f"{speed}" + (f"   ·   Restante: {eta}" if eta else ""))
-        self.after(60, self._drain_events)
+        self._idle_polls = 0 if activity else self._idle_polls + 1
+        self.after(60 if self._idle_polls < 5 else 250, self._drain_events)
 
     def _render_queue(self, data):
         revision = data.get("revision", self._render_revision)
@@ -267,7 +277,9 @@ class AppWindow(ctk.CTk):
         try:
             self.prefs.update(format=self.download_card.get_format(), quality=self.download_card.get_quality(),
                 embed_thumbnail=self.download_card.get_embed_thumbnail(), destination=str(self._custom_destination) if self._custom_destination else "")
-            self._preferences.write(self.prefs)
+            if self.prefs != self._saved_prefs:
+                self._preferences.write(self.prefs)
+                self._saved_prefs = self.prefs.copy()
         except OSError:
             self._emit("log", "[!] No se pudieron guardar las preferencias.")
 

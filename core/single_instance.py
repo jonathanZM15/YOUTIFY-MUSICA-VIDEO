@@ -105,8 +105,8 @@ class SingleInstance:
                     app.deiconify()
                 target.lift()
                 target.focus_force()
-            app.after(150, poll)
-        app.after(150, poll)
+            app.after(500, poll)
+        app.after(500, poll)
 
     def activation_requested(self):
         if not self._event:

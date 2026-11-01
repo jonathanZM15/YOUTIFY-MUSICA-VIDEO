@@ -18,7 +18,7 @@ archivos MP3 o MP4, con playlists, carátulas y una cola que tú controlas.
 
 [📦 Versiones publicadas](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases) · [📝 Novedades](CHANGELOG.md) · [🐛 Reportar un problema](https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/issues)
 
-**Versión actual: v1.3.4 · Windows 10/11 de 64 bits**
+**Versión actual: v1.3.5 · Windows 10/11 de 64 bits**
 
 </div>
 
@@ -71,6 +71,7 @@ de procesarse la lista**; el contador indica cuántos archivos se guardaron corr
 - **Vista previa automática:** título, canal, duración y miniatura cuando están disponibles.
 - **Progreso en vivo:** velocidad y tiempo restante, con un registro de actividad en su propia pestaña.
 - **Una sola instancia:** abrir Youtify de nuevo recupera la ventana existente, incluso minimizada.
+- **Menor carga en reposo:** el motor se carga cuando se necesita, los registros se agrupan y la cola evita redibujar filas sin cambios.
 
 ---
 
@@ -197,6 +198,18 @@ usar esa distribución: el ejecutable necesita sus archivos auxiliares.
 Las pruebas de integración usan medios sintéticos servidos por HTTP local para
 verificar conversión, etiquetas, portada y MP4. Las de interfaz crean widgets reales
 con datos temporales aislados.
+
+Para medir arranque, CPU y memoria en reposo y respuesta de los controles, sin
+descargar música ni generar instaladores:
+
+```powershell
+.\.venv\Scripts\python.exe scripts/profile_ui.py --seconds 8 --jobs 0
+.\.venv\Scripts\python.exe scripts/profile_ui.py --seconds 8 --jobs 2000
+```
+
+La herramienta usa un perfil temporal que se elimina al terminar. Informa la CPU
+respecto a un núcleo y al equipo completo; las mediciones dependen del hardware y
+de la carga del sistema. Añade `--profile` para obtener el detalle de llamadas.
 
 </details>
 

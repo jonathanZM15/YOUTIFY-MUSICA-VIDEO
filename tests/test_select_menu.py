@@ -113,8 +113,7 @@ class TestSelectMenu(unittest.TestCase):
     def test_mouse_open_stops_ctk_global_focus_binding_and_row_click_selects(self):
         self.assertEqual(self.select._open_key(None),'break')
         self.root.update()
-        row = self.select._rows[2]
-        self.select._release_row(SimpleNamespace(x_root=row.winfo_rootx()+10,y_root=row.winfo_rooty()+10),2)
+        self.select._release_canvas(SimpleNamespace(x=10,y=2*self.select._row_height+10))
         self.callback.assert_called_once_with('192 kbps')
         self.assertIsNone(self.root.grab_current())
 

@@ -78,11 +78,53 @@ class TestActualWidgets(unittest.TestCase):
         self.assertIsNone(self.app._custom_destination)
 
     def test_worker_events_do_not_touch_widgets_before_dispatch(self):
-        with patch.object(self.app.console_view, "append_log") as append:
+        with patch.object(self.app.console_view, "append_logs") as append:
             self.app._emit("log", "Worker message")
             append.assert_not_called()
             self.app._drain_events()
             self.assertTrue(any("Worker message" in str(call) for call in append.call_args_list))
+
+    def test_identical_queue_snapshot_does_not_redraw_rows(self):
+        view = self.app.queue_view
+        jobs = [dict(id='stable',format_type='MP3',quality='192 kbps',destination=self.tmp.name,
+            title='Stable',status='pending',error='',filepath='')]
+        try:
+            view.render(jobs)
+            row = view.rows['stable']
+            with patch.object(row['button'],'configure') as configure:
+                view.render([dict(jobs[0])])
+                configure.assert_not_called()
+                view.render([{**jobs[0],'status':'completed','filepath':'saved.mp3'}])
+                self.assertEqual(configure.call_args.kwargs['text'],'Abrir')
+        finally: view.render([])
+
+    def test_batched_logs_are_sanitized_bounded_and_keep_newest_lines(self):
+        from config.settings import MAX_LOG_BUFFER_LINES
+        console = self.app.console_view
+        console.clear_logs()
+        console.append_logs([f'\x1b[31mLine {i}\x1b[0m' for i in range(MAX_LOG_BUFFER_LINES+80)])
+        text = console.textbox.get('1.0','end-1c')
+        self.assertNotIn('\x1b',text)
+        self.assertEqual(len(text.splitlines()),MAX_LOG_BUFFER_LINES)
+        self.assertTrue(text.startswith('Line 80\n'))
+        self.assertEqual(console.textbox.cget('state'),'disabled')
+        console.clear_logs()
+
+    def test_unchanged_progress_does_not_redraw_or_relayout(self):
+        widget = self.app.progress_widget
+        progress = dict(total=5,completed=1,failed=0,cancelled=0,done=1,value=.3,reading=False)
+        try:
+            widget.set_playlist_progress(progress)
+            widget.set_progress(.3)
+            with patch.object(widget.playlist_panel,'grid') as grid, \
+                    patch.object(widget.playlist_bar,'set') as total, \
+                    patch.object(widget.progress_bar,'set') as file:
+                widget.set_playlist_progress(dict(progress))
+                widget.set_progress(.3)
+                grid.assert_not_called()
+                total.assert_not_called()
+                file.assert_not_called()
+        finally: widget.set_playlist_progress(None)
 
     def test_large_playlist_creates_only_one_page_of_widgets(self):
         jobs = [dict(id=str(i), url=f"https://youtube.com/watch?v={i}", format_type="MP3", quality="192 kbps",

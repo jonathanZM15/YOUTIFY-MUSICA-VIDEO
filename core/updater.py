@@ -204,8 +204,8 @@ class Updater:
         def _task():
             current_ver = "desconocida"
             try:
-                import yt_dlp.version
-                current_ver = getattr(yt_dlp.version, "__version__", "desconocida")
+                from importlib.metadata import version
+                current_ver = version("yt-dlp")
                 if log_callback:
                     log_callback(f"[*] Motor yt-dlp: versión instalada {current_ver}")
             except Exception:
