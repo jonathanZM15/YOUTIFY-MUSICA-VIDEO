@@ -106,7 +106,7 @@ class ModalDialog(ctk.CTkToplevel):
             height=32,
             font=("Segoe UI", 11, "bold"),
             fg_color=Colors.PRIMARY,
-            text_color="white",
+            text_color=Colors.PRIMARY_TEXT,
             hover_color=Colors.PRIMARY_HOVER,
             corner_radius=7,
             command=self._on_confirm,

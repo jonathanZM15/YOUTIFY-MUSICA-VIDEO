@@ -68,115 +68,8 @@ class TestThumbnailCreatedTrackingPhase2(unittest.TestCase):
         self.assertTrue(any(p.name == "thumb.jpg" for p in pp.created_thumbnails))
 
 
-class TestInspectUrlThreadSafety(unittest.TestCase):
-    """Fix #2: _inspect_url_async no llama a get_url() fuera del hilo principal."""
-
-    def setUp(self):
-        with patch.object(AppWindow, "__init__", lambda s: None):
-            self.app = AppWindow()
-            self.app.download_card = MagicMock()
-            self.app.preview_card = MagicMock()
-            self.app.after = MagicMock(side_effect=lambda delay, fn: fn() if callable(fn) else None)
-
-    def test_no_get_url_call_in_background_thread(self):
-        """_task() no debe llamar a self.download_card.get_url() en el hilo secundario."""
-        # Simular extract_metadata_fast que devuelve None rápidamente
-        with patch.object(DownloadEngine, "extract_metadata_fast", return_value=None):
-            # Ejecutar _inspect_url_async y capturar el Thread
-            with patch("threading.Thread") as mock_thread:
-                self.app._inspect_url_async("https://www.youtube.com/watch?v=test123")
-                thread_target = mock_thread.call_args[1]["target"]
-
-            # Resetear contadores de get_url antes de ejecutar _task
-            self.app.download_card.get_url.reset_mock()
-
-            # Ejecutar _task en el hilo actual (simula el hilo secundario)
-            thread_target()
-
-            # get_url solo debe haberse llamado dentro de _apply_meta (ejecutado por after),
-            # NO directamente en _task antes de extract_metadata_fast
-            # Como after ejecuta inmediatamente por el side_effect, get_url se llama en _apply_meta
-            # Verificamos que se llamó exactamente 1 vez (solo en _apply_meta, no en _task)
-            self.assertEqual(self.app.download_card.get_url.call_count, 1)
-
-    def test_meta_applied_only_when_url_matches(self):
-        """Si la URL cambió mientras se extraían metadatos, se oculta la preview."""
-        meta = {
-            "title": "Test Video", "channel": "Canal", "duration": "3:00",
-            "thumbnail": "https://example.com/thumb.jpg", "is_playlist": False,
-        }
-        with patch.object(DownloadEngine, "extract_metadata_fast", return_value=meta):
-            with patch("threading.Thread") as mock_thread:
-                self.app._inspect_url_async("https://www.youtube.com/watch?v=original")
-                thread_target = mock_thread.call_args[1]["target"]
-
-            # Simular que la URL cambió
-            self.app.download_card.get_url.return_value = "https://www.youtube.com/watch?v=DIFFERENT"
-            thread_target()
-
-            self.app.preview_card.hide_preview.assert_called()
 
 
-class TestPreviewCardRequestId(unittest.TestCase):
-    """Fix #3: PreviewCard usa _request_id para cancelar miniaturas obsoletas."""
-
-    def test_request_id_increments_on_show(self):
-        """show_preview incrementa _request_id."""
-        from ui.components.preview_card import PreviewCard
-        with patch.object(PreviewCard, "__init__", lambda s, p: None):
-            card = PreviewCard(None)
-            card._request_id = 0
-            card.title_label = MagicMock()
-            card.channel_badge = MagicMock()
-            card.duration_badge = MagicMock()
-            card.thumb_label = MagicMock()
-            card._thumb_img = None
-            card.pack = MagicMock()
-
-            # Sin thumbnail_url no se lanza hilo
-            with patch("threading.Thread"):
-                card.show_preview("Título", "Canal", "3:00")
-            self.assertEqual(card._request_id, 1)
-
-            with patch("threading.Thread"):
-                card.show_preview("Otro Título", "Otro Canal", "5:00")
-            self.assertEqual(card._request_id, 2)
-
-    def test_request_id_increments_on_hide(self):
-        """hide_preview incrementa _request_id y limpia _thumb_img."""
-        from ui.components.preview_card import PreviewCard
-        with patch.object(PreviewCard, "__init__", lambda s, p: None):
-            card = PreviewCard(None)
-            card._request_id = 5
-            card.title_label = MagicMock()
-            card.channel_badge = MagicMock()
-            card.duration_badge = MagicMock()
-            card.thumb_label = MagicMock()
-            card._thumb_img = "some_image"
-            card.pack_forget = MagicMock()
-
-            card.hide_preview()
-            self.assertEqual(card._request_id, 6)
-            self.assertIsNone(card._thumb_img)
-
-    def test_stale_thumbnail_not_applied(self):
-        """Un callback con req_id obsoleto no actualiza thumb_label."""
-        from ui.components.preview_card import PreviewCard
-        with patch.object(PreviewCard, "__init__", lambda s, p: None):
-            card = PreviewCard(None)
-            card._request_id = 10
-            card.thumb_label = MagicMock()
-            card._thumb_img = None
-            card.MAX_THUMB_BYTES = 5 * 1024 * 1024
-
-            # Simular que _fetch_and_render_thumb fue llamado con req_id=5 (obsoleto)
-            # y su callback se ejecuta después
-            stale_req_id = 5
-            # La función _apply_thumb solo configura si req_id == self._request_id
-            if stale_req_id == card._request_id:
-                card.thumb_label.configure(image="new_image", text="")
-            # No debe haberse llamado
-            card.thumb_label.configure.assert_not_called()
 
 
 class TestUpdaterStateLock(unittest.TestCase):
@@ -191,7 +84,7 @@ class TestUpdaterStateLock(unittest.TestCase):
         """Escrituras y lecturas concurrentes no corrompen update_state.json."""
         with tempfile.TemporaryDirectory() as tmp_dir:
             test_file = Path(tmp_dir) / "update_state.json"
-            with patch("config.settings.UPDATE_STATE_FILE", test_file):
+            with patch("core.updater.UPDATE_STATE_FILE", test_file):
                 errors = []
                 results = []
 
@@ -250,8 +143,8 @@ class TestDownloaderBugFixesPhase2(unittest.TestCase):
         self.assertTrue(opts["windowsfilenames"])
         self.assertFalse(opts["restrictfilenames"])
 
-    def test_extract_playlist_urls_has_playlistend(self):
-        """extract_playlist_urls incluye playlistend=100 para limitar mixes infinitos."""
+    def test_extract_playlist_urls_does_not_silently_truncate(self):
+        """Las playlists completas no se recortan silenciosamente a 100 elementos."""
         with patch("yt_dlp.YoutubeDL") as mock_ydl_class:
             mock_instance = MagicMock()
             mock_ydl_class.return_value.__enter__.return_value = mock_instance
@@ -260,7 +153,7 @@ class TestDownloaderBugFixesPhase2(unittest.TestCase):
             }
             DownloadEngine.extract_playlist_urls("https://www.youtube.com/playlist?list=RDtest")
             call_opts = mock_ydl_class.call_args[0][0]
-            self.assertEqual(call_opts.get("playlistend"), 100)
+            self.assertNotIn("playlistend", call_opts)
 
     def test_progress_hook_single_stream_progressive_completes_to_100(self):
         """Un video progresivo (sin requested_formats) completa al 100% en la primera señal de finished."""
@@ -321,70 +214,6 @@ class TestDownloaderBugFixesPhase2(unittest.TestCase):
         self.assertEqual(engine._last_progress_value, 1.0)
 
 
-class TestConditionalSuccessMessage(unittest.TestCase):
-    """Fix #6: _on_single_download_success muestra mensaje diferente según embed_thumbnail."""
-
-    def setUp(self):
-        with patch.object(AppWindow, "__init__", lambda s: None):
-            self.app = AppWindow()
-            self.app.download_queue = queue.Queue()
-            self.app.is_downloading = True
-            self.app._queue_total_items = 1
-            self.app._queue_completed_items = 0
-            self.app.downloader = MagicMock(spec=DownloadEngine)
-            self.app.console_view = MagicMock()
-            self.app.progress_widget = MagicMock()
-            self.app.download_btn = MagicMock()
-            self.app.enqueue_btn = MagicMock()
-            self.app.after = MagicMock(side_effect=lambda delay, fn: fn() if callable(fn) else None)
-            self.app.winfo_exists = MagicMock(return_value=True)
-
-    def test_success_with_thumbnail_shows_cover_message(self):
-        """Con embed_thumbnail=True, muestra mensaje con carátula."""
-        self.app._on_single_download_success(embed_thumbnail=True)
-        self.app.console_view.append_log.assert_any_call(
-            "[✓] Archivo guardado y carátula incrustada con éxito."
-        )
-
-    def test_success_without_thumbnail_shows_simple_message(self):
-        """Con embed_thumbnail=False, muestra mensaje sin mención de carátula."""
-        self.app._on_single_download_success(embed_thumbnail=False)
-        self.app.console_view.append_log.assert_any_call(
-            "[✓] Archivo guardado con éxito."
-        )
-
-    def test_default_parameter_is_true(self):
-        """El valor por defecto de embed_thumbnail es True (compatibilidad con tests existentes)."""
-        self.app._on_single_download_success()
-        self.app.console_view.append_log.assert_any_call(
-            "[✓] Archivo guardado y carátula incrustada con éxito."
-        )
-
-    def test_run_download_thread_passes_embed_thumbnail_to_success(self):
-        """_run_download_thread pasa embed_thumbnail al callback de éxito."""
-        dest = Path("C:/Downloads")
-        self.app.downloader.execute_download.return_value = None
-
-        # Capturar las llamadas a after
-        after_calls = []
-        self.app.after = MagicMock(side_effect=lambda d, fn: after_calls.append((d, fn)))
-
-        self.app._run_download_thread(
-            url="https://youtube.com/watch?v=test",
-            fmt="MP3",
-            quality="320 kbps",
-            destination=dest,
-            embed_thumbnail=False,
-        )
-
-        # Encontrar el callback de éxito (delay=0)
-        success_cbs = [fn for d, fn in after_calls if d == 0]
-        self.assertTrue(len(success_cbs) > 0)
-
-        # Ejecutar el callback y verificar que pasa embed_thumbnail=False
-        with patch.object(self.app, "_on_single_download_success") as mock_success:
-            success_cbs[-1]()
-            mock_success.assert_called_once_with(embed_thumbnail=False)
 
 
 if __name__ == "__main__":

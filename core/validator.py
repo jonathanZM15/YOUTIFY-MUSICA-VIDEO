@@ -29,8 +29,17 @@ class SecurityValidator:
             if not host:
                 return False
 
-            # Comprobar pertenencia estricta en dominios oficiales
-            return host in VALID_YOUTUBE_HOSTS or host.endswith(".youtube.com")
+            if parsed.port not in (None, 80, 443):
+                return False
+            # Only known hosts; YouTube redirect pages are not media resources.
+            if host not in VALID_YOUTUBE_HOSTS:
+                return False
+            path = parsed.path.rstrip("/")
+            if host.endswith("youtu.be"):
+                return bool(re.fullmatch(r"/[A-Za-z0-9_-]+", path))
+            return path in ("/watch", "/playlist") or bool(
+                re.fullmatch(r"/(shorts|live|embed)/[A-Za-z0-9_-]+", path)
+            )
         except Exception:
             return False
 

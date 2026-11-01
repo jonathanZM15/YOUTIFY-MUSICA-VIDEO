@@ -1,77 +1,86 @@
 import customtkinter as ctk
+import math
 from core.downloader import ANSI_ESCAPE_RE as _ANSI_RE, clean_ansi as _clean_text
 from ui.theme import Colors
 
 
 class ProgressBarWidget(ctk.CTkFrame):
-    """Componente que agrupa la línea de progreso ultra-fina y el badge de estado minimalista."""
-
     def __init__(self, parent):
-        super().__init__(parent, fg_color="transparent")
-        self.pack(fill="x", padx=36, pady=(12, 4))
-
-        # Línea de progreso ultra-fina estilo moderno (4px)
-        self.progress_bar = ctk.CTkProgressBar(
-            self,
-            height=4,
-            corner_radius=2,
-            progress_color=Colors.PRIMARY,
-            fg_color=Colors.INPUT_BG,
-        )
+        super().__init__(parent, fg_color=Colors.CARD_BG, corner_radius=14, border_width=1, border_color=Colors.BORDER)
+        self.pack(fill="x", pady=(0, 12))
+        self.grid_columnconfigure(0, weight=1)
+        self.status_badge = ctk.CTkLabel(self, text="Todo listo para tu próxima descarga", width=1, height=20, font=("Segoe UI", 12, "bold"), text_color=Colors.TEXT_PRIMARY, anchor="w")
+        self.status_badge.grid(row=0, column=0, padx=20, pady=(10, 0), sticky="ew")
+        self.percent = ctk.CTkLabel(self, text="0 % del archivo", height=28, font=("Segoe UI", 15, "bold"), text_color=Colors.TEXT_BRAND)
+        self.percent.grid(row=0, column=1, rowspan=2, padx=20, pady=(8, 0))
+        self.detail = ctk.CTkLabel(self, text="El progreso aparecerá aquí", width=1, height=18, font=("Segoe UI", 11), text_color=Colors.TEXT_MUTED, anchor="w")
+        self.detail.grid(row=1, column=0, padx=20, sticky="ew")
+        self.progress_bar = ctk.CTkProgressBar(self, height=6, corner_radius=3, progress_color=Colors.PRIMARY, fg_color=Colors.INPUT_BG)
         self.progress_bar.set(0)
-        self.progress_bar.pack(fill="x", pady=(0, 8))
+        self.progress_bar.grid(row=2, column=0, columnspan=2, padx=20, pady=(6, 10), sticky="ew")
+        self.playlist_panel = ctk.CTkFrame(self, fg_color="transparent")
+        self.playlist_panel.grid_columnconfigure(0, weight=1)
+        self.playlist_label = ctk.CTkLabel(self.playlist_panel, text="Playlist", anchor="w", width=1, height=18,
+            font=("Segoe UI", 11, "bold"), text_color=Colors.TEXT_PRIMARY)
+        self.playlist_label.grid(row=0, column=0, sticky="ew")
+        self.playlist_percent = ctk.CTkLabel(self.playlist_panel, text="0 %", height=20, font=("Segoe UI", 14, "bold"), text_color=Colors.TEXT_BRAND)
+        self.playlist_percent.grid(row=0, column=1, padx=(12, 0))
+        self.playlist_bar = ctk.CTkProgressBar(self.playlist_panel, height=6, corner_radius=3,
+            progress_color=Colors.PRIMARY, fg_color=Colors.INPUT_BG)
+        self.playlist_bar.set(0)
+        self.playlist_bar.grid(row=1, column=0, columnspan=2, sticky="ew", pady=(4, 0))
 
-        # Estado textual sutil sin botones gigantes
-        self.status_badge = ctk.CTkLabel(
-            self,
-            text="Listo para descargar",
-            font=("Segoe UI", 12),
-            text_color=Colors.TEXT_SECONDARY,
-        )
-        self.status_badge.pack(anchor="center")
-
-    def set_progress(self, value: float) -> None:
+    def set_progress(self, value):
         self.progress_bar.set(value)
+        self.percent.configure(text=f"{round(value * 100)} % del archivo")
 
-    def set_active_download(self, current_item: int = 1, total_items: int = 1) -> None:
+    def set_playlist_progress(self, progress):
+        if progress is None:
+            self.playlist_panel.grid_remove()
+            return
+        self.playlist_panel.grid(row=3, column=0, columnspan=2, sticky="ew", padx=20, pady=(0, 12))
+        total = progress["total"]
+        failed, cancelled = progress["failed"], progress["cancelled"]
+        value = progress["value"]
+        if progress["reading"]:
+            text, percent = "Playlist · leyendo canciones…", "—"
+        elif not total:
+            text, percent = "Playlist · cancelada" if cancelled else "Playlist · no se pudo leer", "—"
+        else:
+            text = f'Playlist · {progress["completed"]} de {total} guardadas'
+            if failed or cancelled:
+                text = f'Playlist · {progress["done"]} de {total} finalizadas · {progress["completed"]} guardadas'
+            if failed: text += f" · {failed} con error"
+            if cancelled: text += f" · {cancelled} canceladas"
+            percent = f"{100 if progress['done'] >= total else min(99, math.floor(value * 100))} %"
+        self.playlist_label.configure(text=text)
+        self.playlist_percent.configure(text=percent)
+        self.playlist_bar.set(value)
+        finished = total and progress["done"] >= total
+        color = Colors.PROGRESS_ERROR if failed else Colors.TEXT_MUTED if cancelled else Colors.PROGRESS_SUCCESS if finished else Colors.PRIMARY
+        self.playlist_bar.configure(progress_color=color)
+
+    def set_active_download(self, current_item=1, total_items=1):
         self.progress_bar.configure(progress_color=Colors.PRIMARY)
-        try:
-            cur = int(current_item)
-            tot = int(total_items)
-            if tot > 1:
-                badge_text = f"⚡ Descargando {cur} de {tot}"
-            else:
-                badge_text = "⚡ Descargando..."
-        except (ValueError, TypeError):
-            badge_text = "⚡ Descargando..."
+        self.status_badge.configure(text="Descargando archivo", text_color=Colors.TEXT_PRIMARY)
 
-        self.status_badge.configure(
-            text=badge_text,
-            text_color=Colors.STATUS_ACTIVE_TEXT,
-        )
+    def set_converting(self, current_item=1, total_items=1):
+        self.status_badge.configure(text="Convirtiendo y guardando…", text_color=Colors.STATUS_CONVERT_TEXT)
+        self.detail.configure(text="Preparando el archivo final y sus metadatos")
+        self.set_progress(0.97)
 
-    def set_converting(self, current_item: int = 1, total_items: int = 1) -> None:
-        self.set_active_download(current_item, total_items)
-
-    def set_completed(self) -> None:
+    def set_completed(self):
         self.progress_bar.configure(progress_color=Colors.PROGRESS_SUCCESS)
-        self.progress_bar.set(1.0)
-        self.status_badge.configure(
-            text="✨ ¡Descarga completada con éxito!",
-            text_color=Colors.STATUS_SUCCESS_TEXT,
-        )
+        self.status_badge.configure(text="Archivo guardado", text_color=Colors.STATUS_SUCCESS_TEXT)
+        self.detail.configure(text="Ya puedes abrirlo desde la cola")
+        self.set_progress(1)
 
-    def set_error(self, message: str = "Error en la descarga") -> None:
+    def set_error(self, message="No se pudo descargar el archivo"):
         self.progress_bar.configure(progress_color=Colors.PROGRESS_ERROR)
-        self.status_badge.configure(
-            text=f"❌ {message}",
-            text_color=Colors.STATUS_ERROR_TEXT,
-        )
+        self.status_badge.configure(text=message, text_color=Colors.STATUS_ERROR_TEXT)
+        self.detail.configure(text="Consulta el detalle en la cola y vuelve a intentarlo")
 
-    def reset_state(self) -> None:
-        self.progress_bar.configure(progress_color=Colors.PRIMARY)
-        self.progress_bar.set(0)
-        self.status_badge.configure(
-            text="Listo para descargar",
-            text_color=Colors.TEXT_SECONDARY,
-        )
+    def reset_state(self):
+        self.set_progress(0)
+        self.status_badge.configure(text="Cola en pausa", text_color=Colors.TEXT_SECONDARY)
+        self.detail.configure(text="Pulsa Iniciar cola cuando quieras continuar")

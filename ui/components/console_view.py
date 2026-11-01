@@ -15,7 +15,7 @@ class ConsoleView(ctk.CTkFrame):
             border_width=1,
             border_color=Colors.BORDER,
         )
-        self.pack(fill="x", padx=36, pady=(6, 20))
+        self.pack(fill="both", expand=True, padx=6, pady=(4, 8))
         self._line_count = 0
 
         # Barra superior sutil
@@ -64,8 +64,8 @@ class ConsoleView(ctk.CTkFrame):
             return
 
         self.textbox.configure(state="normal")
-        self._line_count += 1
-        if self._line_count > MAX_LOG_BUFFER_LINES:
+        self._line_count += clean_msg.count("\n") + 1
+        while self._line_count > MAX_LOG_BUFFER_LINES:
             self.textbox.delete("1.0", "2.0")
             self._line_count -= 1
 

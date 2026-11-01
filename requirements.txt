@@ -1,4 +1,6 @@
-customtkinter>=5.2.2
-yt-dlp>=2025.1.15
-pillow>=10.0.0
-mutagen>=1.47.0
+customtkinter==6.0.0
+yt-dlp[default]==2026.8.19
+pillow==12.3.0
+mutagen==1.48.1
+psutil==7.2.2
+packaging==26.3

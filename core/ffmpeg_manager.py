@@ -3,6 +3,8 @@ import shutil
 import tempfile
 import urllib.request
 import zipfile
+import os
+import threading
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -17,6 +19,7 @@ from config.settings import (
 
 class FFmpegManager:
     """Gestiona la detección local, en PATH y aprovisionamiento seguro de FFmpeg/FFprobe."""
+    _lock = threading.RLock()
 
     @classmethod
     def resolve_ffmpeg(cls, log_callback: Optional[Callable[[str], None]] = None) -> Path:
@@ -34,7 +37,7 @@ class FFmpegManager:
         # 2. PATH del sistema operativo
         sys_ffmpeg = shutil.which("ffmpeg")
         sys_ffprobe = shutil.which("ffprobe")
-        if sys_ffmpeg and sys_ffprobe:
+        if sys_ffmpeg and sys_ffprobe and Path(sys_ffmpeg).resolve().parent == Path(sys_ffprobe).resolve().parent:
             return Path(sys_ffmpeg).resolve().parent
 
         # 3. Carpeta de usuario en AppData
@@ -42,7 +45,10 @@ class FFmpegManager:
             return APPDATA_FFMPEG_DIR
 
         # 4. Descarga segura desde el mirror oficial verificado
-        return cls._download_fallback(log_callback)
+        with cls._lock:
+            if all((APPDATA_FFMPEG_DIR / name).is_file() for name in ("ffmpeg.exe", "ffprobe.exe")):
+                return APPDATA_FFMPEG_DIR
+            return cls._download_fallback(log_callback)
 
     @classmethod
     def _download_fallback(cls, log_callback: Optional[Callable[[str], None]]) -> Path:
@@ -78,13 +84,29 @@ class FFmpegManager:
                     raise RuntimeError("Fallo de integridad SHA-256 en FFmpeg")
 
             with zipfile.ZipFile(archive_path) as zf:
+                staged = []
                 for member in zf.namelist():
                     if member.endswith(("bin/ffmpeg.exe", "bin/ffprobe.exe")):
                         filename = Path(member).name
-                        with zf.open(member) as src, open(APPDATA_FFMPEG_DIR / filename, "wb") as dst:
-                            shutil.copyfileobj(src, dst)
+                        target = APPDATA_FFMPEG_DIR / filename
+                        staging = target.with_suffix(".exe.tmp")
+                        try:
+                            with zf.open(member) as src, open(staging, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            if staging.stat().st_size < 1024:
+                                raise RuntimeError("El binario de FFmpeg está incompleto.")
+                            staged.append((staging, target))
+                        except Exception:
+                            staging.unlink(missing_ok=True)
+                            raise
+                if len(staged) != 2:
+                    raise RuntimeError("El paquete no contiene FFmpeg y FFprobe.")
+                for staging, target in staged:
+                    os.replace(staging, target)
         finally:
             archive_path.unlink(missing_ok=True)
+            for staging in APPDATA_FFMPEG_DIR.glob("*.exe.tmp"):
+                staging.unlink(missing_ok=True)
 
         if not (APPDATA_FFMPEG_DIR / "ffmpeg.exe").exists() or not (APPDATA_FFMPEG_DIR / "ffprobe.exe").exists():
             raise RuntimeError("Fallo crítico: No se pudieron desplegar los binarios de FFmpeg.")

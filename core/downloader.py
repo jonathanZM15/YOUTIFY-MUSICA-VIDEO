@@ -1,8 +1,8 @@
-import gc
 import re
-import shutil
 import time
 import urllib.parse
+import threading
+import logging
 from pathlib import Path
 from typing import Callable, Optional
 
@@ -33,16 +33,29 @@ from config.settings import (
     THUMBNAIL_MAX_DIMENSION,
 )
 from core.ffmpeg_manager import FFmpegManager
+from core.runtime import javascript_options
+from core.validator import SecurityValidator
 from PIL import Image
 from yt_dlp.postprocessor import PostProcessor
 
-# NOTA DE ARQUITECTURA / ROADMAP ANTIBOT:
-# 1. Estrategia activa (inmediata y predeterminada): Emulación en cascada de clientes oficiales
-#    móviles (player_client: ios, android, web). Resuelve el error "Sign in to confirm you're not a bot"
-#    sin requerir Node.js, cookies de navegador ni herramientas de programador en la máquina del usuario.
-# 2. Roadmap mediano plazo: Integración de un motor JS ultra-ligero embebido (como QuickJS portátil ~2MB)
-#    directamente en el empaquetador del instalador (.iss / dist) como salvaguarda autónoma si YouTube
-#    bloquea en el futuro clientes móviles.
+class DownloadCancelled(Exception):
+    """Cancellation is a separate result, never a successful download."""
+
+
+class EngineLogger:
+    def __init__(self, callback=None):
+        self.callback = callback
+
+    def debug(self, message):
+        logging.getLogger("yt_dlp").debug(clean_ansi(message))
+
+    def warning(self, message):
+        logging.getLogger("yt_dlp").warning(clean_ansi(message))
+        if self.callback:
+            self.callback(f"[!] {clean_ansi(message)}")
+
+    def error(self, message):
+        logging.getLogger("yt_dlp").error(clean_ansi(message))
 
 
 def optimize_thumbnail(
@@ -160,22 +173,49 @@ class DownloadEngine:
         self._phase_offset_bytes: int = 0
         self._phase_last_bytes: int = 0
         self._total_combined_bytes: int = 0
+        self._cancel = threading.Event()
+        self._result = {}
+
+    def cancel(self):
+        self._cancel.set()
+        # These are child processes of this app only, never other user processes.
+        import psutil
+        try:
+            for child in psutil.Process().children(recursive=True):
+                try:
+                    if child.name().lower() in {"ffmpeg.exe", "ffprobe.exe", "node.exe", "deno.exe", "qjs.exe"}:
+                        child.terminate()
+                except (psutil.NoSuchProcess, psutil.AccessDenied):
+                    pass
+        except psutil.Error:
+            pass
+
+    def _check_cancelled(self, *_):
+        if self._cancel.is_set():
+            raise DownloadCancelled("Descarga cancelada")
+
+    def _postprocessor_hook(self, data):
+        self._check_cancelled()
+        info = data.get("info_dict") or {}
+        if info.get("filepath"):
+            self._result = {"filepath": info["filepath"], "title": info.get("title", "Archivo")}
+        if data.get("status") == "started" and self.on_status:
+            self.on_status("converting", "Convirtiendo y guardando...")
 
     @staticmethod
     def extract_metadata_fast(url: str) -> Optional[dict]:
         """Extrae metadatos y miniatura de forma ultrarrápida sin descargar el archivo."""
         from yt_dlp import YoutubeDL
         opts = {
-            "extract_flat": False,
+            "extract_flat": "in_playlist",
+            "playlistend": 1,
             "skip_download": True,
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 8,
             "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
         }
-        if shutil.which("node"):
-            opts["js_runtimes"] = {"node": {}}
-            opts["remote_components"] = {"ejs": ["github"]}
+        opts.update(javascript_options())
         try:
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -183,13 +223,13 @@ class DownloadEngine:
                     return None
                 # Si es una playlist, obtener el primer video o datos generales
                 entries = info.get("entries")
-                if entries:
+                if entries is not None:
                     first = list(entries)[0] if isinstance(entries, (list, tuple)) else next(iter(entries), None)
                     return {
                         "title": info.get("title") or (first.get("title") if first else "Playlist"),
                         "channel": info.get("uploader") or info.get("channel") or (first.get("uploader") if first else "Desconocido"),
-                        "duration": info.get("playlist_count", 0),
-                        "thumbnail": info.get("thumbnail") or (first.get("thumbnail") if first else None),
+                        "duration": info.get("playlist_count") or info.get("n_entries") or "—",
+                        "thumbnail": info.get("thumbnail") or ((first.get("thumbnail") or f"https://i.ytimg.com/vi/{first.get('id')}/hqdefault.jpg") if first else None),
                         "is_playlist": True,
                     }
 
@@ -232,12 +272,10 @@ class DownloadEngine:
             "quiet": True,
             "no_warnings": True,
             "socket_timeout": 8,
-            "playlistend": 100,
+            "ignoreerrors": True,
             "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
         }
-        if shutil.which("node"):
-            opts["js_runtimes"] = {"node": {}}
-            opts["remote_components"] = {"ejs": ["github"]}
+        opts.update(javascript_options())
         try:
             with YoutubeDL(opts) as ydl:
                 info = ydl.extract_info(url, download=False)
@@ -253,13 +291,13 @@ class DownloadEngine:
                         continue
                     video_url = entry.get("url")
                     video_id = entry.get("id")
-                    if video_url and (video_url.startswith("http://") or video_url.startswith("https://")):
+                    if video_url and SecurityValidator.is_valid_youtube_url(video_url):
                         urls.append(video_url)
                     elif video_id:
                         urls.append(f"https://www.youtube.com/watch?v={video_id}")
-                return urls
-        except Exception:
-            return []
+                return list(dict.fromkeys(urls))
+        except Exception as error:
+            raise RuntimeError("No se pudo leer la playlist. Comprueba el enlace y la conexión.") from error
 
     def execute_download(
         self,
@@ -268,7 +306,11 @@ class DownloadEngine:
         quality: str,
         destination_dir: Path,
         embed_thumbnail: bool = DEFAULT_EMBED_THUMBNAIL,
-    ) -> None:
+    ) -> dict:
+        if not SecurityValidator.is_valid_youtube_url(url):
+            raise ValueError("El enlace no corresponde a un video o playlist de YouTube.")
+        self._check_cancelled()
+        self._result = {}
         destination_dir.mkdir(parents=True, exist_ok=True)
         is_audio = format_type.startswith("MP3")
         self.is_audio = is_audio
@@ -300,39 +342,6 @@ class DownloadEngine:
 
         from yt_dlp import YoutubeDL
 
-        # Si es video (selector dual bestvideo+bestaudio), estimar el peso total combinado
-        if not is_audio:
-            try:
-                meta_opts = {
-                    "quiet": True,
-                    "no_warnings": True,
-                    "skip_download": True,
-                    "format": options.get("format"),
-                    "socket_timeout": 8,
-                    "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
-                }
-                if shutil.which("node"):
-                    meta_opts["js_runtimes"] = {"node": {}}
-                    meta_opts["remote_components"] = {"ejs": ["github"]}
-                with YoutubeDL(meta_opts) as ydl_meta:
-                    meta_info = ydl_meta.extract_info(url, download=False)
-                    if meta_info:
-                        req_formats = meta_info.get("requested_formats")
-                        if req_formats and len(req_formats) >= 2:
-                            self._expected_stream_count = len(req_formats)
-                            self._total_combined_bytes = sum(
-                                f.get("filesize") or f.get("filesize_approx") or 0
-                                for f in req_formats
-                            )
-                        else:
-                            self._expected_stream_count = 1
-                            self._total_combined_bytes = (
-                                meta_info.get("filesize") or meta_info.get("filesize_approx") or 0
-                            )
-            except Exception:
-                self._expected_stream_count = 2
-                self._total_combined_bytes = 0
-
         self._log("[+] Conectando con los servidores de YouTube...")
         if self.on_status:
             self.on_status("connecting", "Conectando con servidores...")
@@ -341,22 +350,25 @@ class DownloadEngine:
         try:
             with YoutubeDL(options) as downloader:
                 if embed_thumbnail:
-                    embed_idx = next(
-                        (i for i, pp in enumerate(downloader._pps.get("post_process", []))
-                         if pp.__class__.__name__ == "EmbedThumbnailPP"),
-                        None
-                    )
                     optimizer = ThumbnailOptimizerPP(
                         downloader,
                         max_dimension=THUMBNAIL_MAX_DIMENSION,
                         quality=THUMBNAIL_JPEG_QUALITY,
                     )
-                    if embed_idx is not None:
-                        downloader._pps["post_process"].insert(embed_idx, optimizer)
-                    else:
-                        downloader._pps["post_process"].append(optimizer)
+                    downloader.add_post_processor(optimizer, when="before_dl")
 
-                downloader.download([url])
+                info = downloader.extract_info(url, download=True)
+                self._check_cancelled()
+                if not info:
+                    raise RuntimeError("YouTube no devolvió un archivo descargable.")
+                if not self._result:
+                    requested = info.get("requested_downloads") or [info]
+                    path = requested[-1].get("filepath") or downloader.prepare_filename(info)
+                    self._result = {"title": info.get("title", "Archivo"), "filepath": path}
+                if not Path(self._result["filepath"]).is_file():
+                    raise RuntimeError("La descarga no produjo el archivo final esperado.")
+                return self._result
+        finally:
             # Limpieza segura: eliminar solo las miniaturas registradas por ThumbnailOptimizerPP
             if embed_thumbnail and optimizer is not None:
                 for thumb_path in optimizer.created_thumbnails:
@@ -365,10 +377,16 @@ class DownloadEngine:
                             thumb_path.unlink(missing_ok=True)
                     except Exception:
                         pass
-        finally:
-            gc.collect()
 
     def _progress_hook(self, data: dict) -> None:
+        self._check_cancelled()
+        info = data.get("info_dict") or {}
+        formats = info.get("requested_formats")
+        if formats:
+            self._expected_stream_count = len(formats)
+            sizes = [f.get("filesize") or f.get("filesize_approx") or 0 for f in formats]
+            if all(sizes):
+                self._total_combined_bytes = sum(sizes)
         status = data.get("status")
         if status == "downloading":
             now = time.monotonic()
@@ -492,7 +510,7 @@ class DownloadEngine:
                 # Video multi-stream: verificar qué stream acaba de finalizar
                 if self._stream_phase_index + 1 < self._expected_stream_count:
                     # Cerrar fase de video sin reiniciar barra visual
-                    self._phase_offset_bytes += self._phase_last_bytes
+                    self._phase_offset_bytes += max(self._phase_last_bytes, data.get("downloaded_bytes") or 0)
                     self._phase_last_bytes = 0
                     self._stream_phase_index += 1
                     self._current_stream_id = None
@@ -518,12 +536,12 @@ class DownloadEngine:
         embed_thumbnail: bool = DEFAULT_EMBED_THUMBNAIL,
     ) -> dict:
         options = {
-            "outtmpl": str(destination / "%(title)s.%(ext)s"),
+            "outtmpl": str(destination / f"%(title).140s [%(id)s] [{quality or 'max'}].%(ext)s"),
             "windowsfilenames": True,
             "restrictfilenames": False,
             "noplaylist": True,
-            "retries": 10,
-            "fragment_retries": 10,
+            "retries": 3,
+            "fragment_retries": 3,
             "socket_timeout": DOWNLOAD_TIMEOUT_SEC,
             "concurrent_fragment_downloads": CONCURRENT_FRAGMENT_DOWNLOADS,
             "buffersize": BUFFER_SIZE_BYTES,
@@ -537,15 +555,16 @@ class DownloadEngine:
             },
             "extractor_args": DEFAULT_YOUTUBE_EXTRACTOR_ARGS,
             "progress_hooks": [self._progress_hook],
+            "postprocessor_hooks": [self._postprocessor_hook],
+            "match_filter": self._match_filter,
+            "logger": EngineLogger(self._log),
             "ffmpeg_location": str(ffmpeg_dir),
             "quiet": True,
-            "no_warnings": True,
+            "no_warnings": False,
             "noprogress": False,
         }
 
-        if shutil.which("node"):
-            options["js_runtimes"] = {"node": {}}
-            options["remote_components"] = {"ejs": ["github"]}
+        options.update(javascript_options())
 
         if is_audio:
             preferred_quality = AUDIO_QUALITY_MAP.get(quality, "0") if quality else "0"
@@ -579,6 +598,7 @@ class DownloadEngine:
                 if height else "bestvideo+bestaudio/best/best"
             )
             postprocessors = [
+                {"key": "FFmpegVideoRemuxer", "preferedformat": "mp4"},
                 {
                     "key": "FFmpegMetadata",
                     "add_metadata": True,
@@ -597,6 +617,12 @@ class DownloadEngine:
             })
 
         return options
+
+    def _match_filter(self, info, *, incomplete=False):
+        self._check_cancelled()
+        if info.get("title") and self.on_status:
+            self.on_status("title", info["title"])
+        return None
 
     def _log(self, message: str) -> None:
         if self.on_log:

@@ -1,13 +1,15 @@
 from dataclasses import dataclass
 import json
+import logging
 import re
-import subprocess
 import sys
 import threading
 import time
 import urllib.request
 from pathlib import Path
 from typing import Callable, Optional
+from packaging.version import Version, InvalidVersion
+from core.storage import JsonStore
 
 from config.settings import (
     APP_NAME,
@@ -15,6 +17,8 @@ from config.settings import (
     GITHUB_API_LATEST_RELEASE,
     GITHUB_RELEASES_URL,
     UPDATE_STATE_FILE,
+    UPDATE_CHECK_INTERVAL_SEC,
+    UPDATE_ASSET_NAME,
 )
 
 
@@ -27,6 +31,8 @@ class ReleaseInfo:
     release_notes: str
     html_url: str
     download_url: str
+    sha256: str = ""
+    size: int = 0
 
 
 class Updater:
@@ -44,14 +50,18 @@ class Updater:
     @classmethod
     def is_newer_version(cls, remote_tag: str, current_version: str) -> bool:
         """Determina si la versión remota es estrictamente superior a la local."""
-        return cls.parse_version(remote_tag) > cls.parse_version(current_version)
+        try:
+            return Version(remote_tag.lstrip("vV")) > Version(current_version.lstrip("vV"))
+        except InvalidVersion:
+            return False
 
     @classmethod
     def _load_state(cls) -> dict:
         try:
             if UPDATE_STATE_FILE.exists():
                 with open(UPDATE_STATE_FILE, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    data = json.load(f)
+                    return data if isinstance(data, dict) else {}
         except Exception:
             pass
         return {}
@@ -59,9 +69,7 @@ class Updater:
     @classmethod
     def _save_state(cls, data: dict) -> None:
         try:
-            UPDATE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-            with open(UPDATE_STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            JsonStore(UPDATE_STATE_FILE).write(data)
         except Exception:
             pass
 
@@ -88,11 +96,13 @@ class Updater:
     def should_notify(cls, remote_tag: str) -> bool:
         """Comprueba si el usuario pospuso la notificación de esta versión."""
         state = cls._read_update_state()
+        if state.get("last_notified_tag") == remote_tag:
+            return False
         postponed_until = state.get("postponed_until", 0)
         postponed_tag = state.get("postponed_tag", "")
 
         # Si pospuso esta misma versión y aún no expira el tiempo, silenciar
-        if postponed_tag == remote_tag and time.time() < postponed_until:
+        if postponed_tag == remote_tag and isinstance(postponed_until, (int, float)) and time.time() < postponed_until:
             return False
         return True
 
@@ -108,6 +118,14 @@ class Updater:
     def check_github_release(cls) -> Optional[ReleaseInfo]:
         """Consulta GitHub Releases API de forma segura y devuelve info si hay actualización."""
         try:
+            with cls._state_lock:
+                state = cls._load_state()
+                last = state.get("last_check", 0)
+                now = time.time()
+                if isinstance(last, (int, float)) and 0 <= now - last < UPDATE_CHECK_INTERVAL_SEC:
+                    return None
+                state["last_check"] = now
+                cls._save_state(state)
             request = urllib.request.Request(
                 GITHUB_API_LATEST_RELEASE,
                 headers={
@@ -118,33 +136,30 @@ class Updater:
             with urllib.request.urlopen(request, timeout=5) as response:
                 if response.status != 200:
                     return None
-                data = json.loads(response.read().decode("utf-8"))
+                raw = response.read(1024 * 1024 + 1)
+                if len(raw) > 1024 * 1024:
+                    return None
+                data = json.loads(raw.decode("utf-8"))
 
             tag_name = data.get("tag_name", "").strip()
-            if not tag_name:
+            if not re.fullmatch(r"v?\d+\.\d+\.\d+", tag_name) or data.get("draft") or data.get("prerelease"):
                 return None
 
             if not cls.is_newer_version(tag_name, APP_VERSION):
                 return None
 
-            if not cls.should_notify(tag_name):
+            asset = next((a for a in data.get("assets", []) if a.get("name") == UPDATE_ASSET_NAME), None)
+            if not asset:
+                return None
+            download_url = asset.get("browser_download_url", "")
+            from core.managed_updates import valid_package_url, MAX_ARCHIVE_BYTES
+            digest = asset.get("digest", "") or ""
+            size = asset.get("size", 0)
+            if not valid_package_url(download_url, tag_name) or not re.fullmatch(r"sha256:[a-f0-9]{64}", digest) or not isinstance(size, int) or not 0 < size <= MAX_ARCHIVE_BYTES:
                 return None
 
-            # Buscar asset instalador ejecutable .exe en la release
-            download_url = data.get("html_url", GITHUB_RELEASES_URL)
-            for asset in data.get("assets", []):
-                name = asset.get("name", "")
-                if name.lower().endswith(".exe"):
-                    download_url = asset.get("browser_download_url", download_url)
-                    if "setup" in name.lower():
-                        break
-
-            # Ciberseguridad: Solo admitir URLs HTTPS legítimas para mitigar inyecciones de esquemas arbitrarios
-            if not isinstance(download_url, str) or not download_url.startswith("https://"):
-                download_url = GITHUB_RELEASES_URL
-
             html_url = data.get("html_url", GITHUB_RELEASES_URL)
-            if not isinstance(html_url, str) or not html_url.startswith("https://"):
+            if not cls._valid_release_url(html_url):
                 html_url = GITHUB_RELEASES_URL
 
             clean_ver = tag_name.lstrip("vV")
@@ -159,23 +174,33 @@ class Updater:
                 release_notes=body_summary.strip(),
                 html_url=html_url,
                 download_url=download_url,
+                sha256=digest[7:],
+                size=size,
             )
         except Exception:
             return None
 
     @classmethod
     def check_app_update_async(cls, callback: Callable[[ReleaseInfo], None]) -> None:
-        """Verifica en segundo plano sin bloquear interfaz gráfica ni el hilo principal."""
+        """Prepara el paquete completo fuera de Tk; el aviso llega solo al estar listo."""
         def _task():
-            release = cls.check_github_release()
-            if release:
-                callback(release)
+            if not getattr(sys, "frozen", False):
+                return  # Development never activates a packaged release.
+            try:
+                release = cls.check_github_release()
+                if release:
+                    from core.managed_updates import ManagedUpdates
+                    ManagedUpdates().prepare(release)
+                    if cls.should_notify(release.tag_name):
+                        callback(release)
+            except Exception:
+                logging.getLogger(__name__).exception("No se pudo preparar la actualización; se reintentará más tarde")
 
         threading.Thread(target=_task, daemon=True).start()
 
     @classmethod
     def check_and_update_async(cls, log_callback: Optional[Callable[[str], None]] = None) -> None:
-        """Comprueba de forma segura actualizaciones de dependencias en modo desarrollo y reporta versión."""
+        """Report the bundled engine version. Never mutate an environment at application startup."""
         def _task():
             current_ver = "desconocida"
             try:
@@ -191,35 +216,14 @@ class Updater:
             if last_updated and log_callback:
                 log_callback(f"[*] yt-dlp: última actualización registrada el {last_updated}")
 
-            if getattr(sys, "frozen", False):
-                return
-
-            try:
-                result = subprocess.run(
-                    [sys.executable, "-m", "pip", "install", "--upgrade", "yt-dlp", "--no-warn-script-location"],
-                    capture_output=True,
-                    text=True,
-                    timeout=30,
-                )
-                if result.returncode == 0:
-                    now_str = time.strftime("%Y-%m-%d %H:%M:%S")
-                    if "Requirement already satisfied" not in result.stdout:
-                        try:
-                            import importlib
-                            import yt_dlp.version
-                            importlib.reload(yt_dlp.version)
-                            current_ver = getattr(yt_dlp.version, "__version__", current_ver)
-                        except Exception:
-                            pass
-                        cls._update_state(yt_dlp_last_updated=now_str)
-                        if log_callback:
-                            log_callback(f"[*] yt-dlp actualizado a la versión más reciente ({current_ver}) el {now_str}.")
-                    else:
-                        if not last_updated:
-                            cls._update_state(yt_dlp_last_updated=now_str)
-                        if log_callback:
-                            log_callback(f"[*] yt-dlp verificado: ya se encuentra en la versión más reciente ({current_ver}).")
-            except Exception:
-                pass
-
         threading.Thread(target=_task, daemon=True).start()
+
+    @staticmethod
+    def _valid_release_url(url):
+        from urllib.parse import urlparse
+        from config.settings import GITHUB_REPO
+        if not isinstance(url, str):
+            return False
+        parsed = urlparse(url)
+        return (parsed.scheme == "https" and parsed.netloc == "github.com"
+                and parsed.path.startswith(f"/{GITHUB_REPO}/releases"))

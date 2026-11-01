@@ -150,86 +150,6 @@ class TestAnsiDeduplicationPhase3(unittest.TestCase):
         self.assertIs(app_window_mod._clean_text, clean_ansi)
 
 
-class TestCustomDestinationAndAppWindowPhase3(unittest.TestCase):
-    """Test #4: Selector de carpeta personalizada y atributos de clase en AppWindow."""
-
-    def setUp(self):
-        with patch.object(AppWindow, "__init__", lambda s: None):
-            self.app = AppWindow()
-            self.app.download_queue = queue.Queue()
-            self.app.is_downloading = False
-            self.app._queue_total_items = 0
-            self.app._queue_completed_items = 0
-            self.app._custom_destination = None
-            self.app.download_card = MagicMock()
-            self.app.destination_label = MagicMock()
-            self.app.downloader = MagicMock()
-            self.app.after = MagicMock(side_effect=lambda d, fn: fn() if callable(fn) else None)
-
-    def test_class_level_defaults_preserved(self):
-        """Verifica que los atributos a nivel de clase existen con sus valores esperados."""
-        self.assertEqual(AppWindow._queue_total_items, 0)
-        self.assertEqual(AppWindow._queue_completed_items, 0)
-        self.assertIsNone(AppWindow._custom_destination)
-
-    def test_get_current_destination_default_behavior(self):
-        """Sin carpeta personalizada, retorna MUSIC_DIR para MP3 y VIDEO_DIR para MP4."""
-        self.app.download_card.get_format.return_value = "MP3 (audio)"
-        self.assertEqual(self.app._get_current_destination(), MUSIC_DIR)
-
-        self.app.download_card.get_format.return_value = "MP4 (video)"
-        self.assertEqual(self.app._get_current_destination(), VIDEO_DIR)
-
-    def test_get_current_destination_custom_override(self):
-        """Con _custom_destination configurado, se ignora el formato y se retorna la ruta personalizada."""
-        custom_path = Path("C:/MiCarpetaPersonalizada")
-        self.app._custom_destination = custom_path
-
-        self.app.download_card.get_format.return_value = "MP3 (audio)"
-        self.assertEqual(self.app._get_current_destination(), custom_path)
-
-        self.app.download_card.get_format.return_value = "MP4 (video)"
-        self.assertEqual(self.app._get_current_destination(), custom_path)
-
-    @patch("customtkinter.filedialog.askdirectory")
-    def test_choose_custom_folder_sets_destination_and_updates_label(self, mock_askdirectory):
-        mock_askdirectory.return_value = "D:/MusicaEspecial"
-
-        self.app._choose_custom_folder()
-
-        self.assertEqual(self.app._custom_destination, Path("D:/MusicaEspecial"))
-        self.app.destination_label.configure.assert_called_with(text="Destino: MusicaEspecial")
-
-    @patch("customtkinter.filedialog.askdirectory")
-    def test_choose_custom_folder_cancelled_keeps_previous(self, mock_askdirectory):
-        mock_askdirectory.return_value = ""  # Usuario canceló el diálogo
-
-        self.app._custom_destination = None
-        self.app._choose_custom_folder()
-        self.assertIsNone(self.app._custom_destination)
-        self.app.destination_label.configure.assert_not_called()
-
-    def test_run_download_thread_calls_execute_download_directly(self):
-        """Verifica que _run_download_thread invoque execute_download directamente."""
-        dest = Path("C:/Dest")
-        self.app.downloader.execute_download.return_value = None
-
-        with patch.object(self.app, "_on_single_download_success") as mock_success:
-            self.app._run_download_thread(
-                url="https://youtube.com/watch?v=123",
-                fmt="MP3",
-                quality="320 kbps",
-                destination=dest,
-                embed_thumbnail=True,
-            )
-            self.app.downloader.execute_download.assert_called_once_with(
-                url="https://youtube.com/watch?v=123",
-                format_type="MP3",
-                quality="320 kbps",
-                destination_dir=dest,
-                embed_thumbnail=True,
-            )
-            mock_success.assert_called_once_with(embed_thumbnail=True)
 
 
 class TestDocumentationAndCIPhase3(unittest.TestCase):
@@ -239,7 +159,8 @@ class TestDocumentationAndCIPhase3(unittest.TestCase):
         readme_path = Path(__file__).resolve().parent.parent / "README.md"
         content = readme_path.read_text(encoding="utf-8")
 
-        self.assertIn("v1.1.0", content)
+        from config.settings import APP_VERSION
+        self.assertIn("v" + APP_VERSION, content)
         self.assertNotIn("v1.0.9", content)
         self.assertNotIn("v1.0.7", content)
 

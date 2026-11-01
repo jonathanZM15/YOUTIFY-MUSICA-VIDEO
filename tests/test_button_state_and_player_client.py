@@ -1,180 +1,55 @@
-import unittest
-from unittest.mock import MagicMock, patch
-import queue
+"""Test options with real yt-dlp, rather than asserting dictionaries passed to a mock."""
 from pathlib import Path
-
-from config.settings import DEFAULT_YOUTUBE_EXTRACTOR_ARGS
+import unittest
+from unittest.mock import patch
+from yt_dlp import YoutubeDL
 from core.downloader import DownloadEngine
-from ui.app_window import AppWindow
+from core.validator import SecurityValidator
 
 
-class TestButtonStateAndPlayerClient(unittest.TestCase):
-    def setUp(self):
-        with patch.object(AppWindow, "__init__", lambda s: None):
-            self.app = AppWindow()
-            self.app.download_queue = queue.Queue()
-            self.app.is_downloading = False
-            self.app._queue_total_items = 0
-            self.app._queue_completed_items = 0
-            self.app.downloader = MagicMock(spec=DownloadEngine)
-            self.app.console_view = MagicMock()
-            self.app.progress_widget = MagicMock()
-            self.app.download_btn = MagicMock()
-            self.app.enqueue_btn = MagicMock()
-            self.app.destination_label = MagicMock()
-            self.app.download_card = MagicMock()
-            self.app.preview_card = MagicMock()
-            self.app.after = MagicMock(side_effect=lambda delay, fn: fn() if callable(fn) else None)
-            self.app.winfo_exists = MagicMock(return_value=True)
+class TestDownloadOptions(unittest.TestCase):
+    def options(self, audio=False, quality="720p"):
+        return DownloadEngine()._build_yt_dlp_options(audio, Path("C:/review"), Path("ffmpeg").resolve(), quality, False)
 
-    def test_default_youtube_extractor_args_present_in_downloader_options(self):
-        """Verifica que _build_yt_dlp_options incluya player_client: ['ios', 'android', 'web']."""
-        engine = DownloadEngine()
-        dest = Path("C:/Downloads")
-        opts_audio = engine._build_yt_dlp_options(
-            is_audio=True,
-            destination=dest,
-            ffmpeg_dir=dest,
-            quality="320 kbps",
-        )
-        self.assertIn("extractor_args", opts_audio)
-        self.assertEqual(opts_audio["extractor_args"], DEFAULT_YOUTUBE_EXTRACTOR_ARGS)
-        self.assertEqual(
-            opts_audio["extractor_args"]["youtube"]["player_client"],
-            ["ios", "android", "web"],
-        )
+    def test_real_downloader_accepts_runtime_configuration(self):
+        with YoutubeDL(self.options()) as ydl:
+            self.assertFalse(ydl.params["remote_components"])
 
-        opts_video = engine._build_yt_dlp_options(
-            is_audio=False,
-            destination=dest,
-            ffmpeg_dir=dest,
-            quality="1080p",
-        )
-        self.assertIn("extractor_args", opts_video)
-        self.assertEqual(opts_video["extractor_args"], DEFAULT_YOUTUBE_EXTRACTOR_ARGS)
-        self.assertIn("/best", opts_video["format"])
+    def test_different_ids_produce_distinct_filenames(self):
+        with YoutubeDL(self.options()) as ydl:
+            first = ydl.prepare_filename({"title": "Same title", "id": "first", "ext": "mp4"})
+            second = ydl.prepare_filename({"title": "Same title", "id": "second", "ext": "mp4"})
+        self.assertNotEqual(first, second)
 
-    def test_extract_metadata_fast_uses_extractor_args(self):
-        """Verifica que extract_metadata_fast aplique DEFAULT_YOUTUBE_EXTRACTOR_ARGS a YoutubeDL."""
-        with patch("yt_dlp.YoutubeDL") as mock_ydl_class:
-            mock_ydl_instance = MagicMock()
-            mock_ydl_class.return_value.__enter__.return_value = mock_ydl_instance
-            mock_ydl_instance.extract_info.return_value = {
-                "title": "Prueba",
-                "uploader": "Canal",
-                "duration": 180,
-                "thumbnail": "http://img.jpg",
-            }
-            res = DownloadEngine.extract_metadata_fast("https://www.youtube.com/watch?v=jxQHd9Y2JWU")
-            self.assertIsNotNone(res)
-            call_opts = mock_ydl_class.call_args[0][0]
-            self.assertIn("extractor_args", call_opts)
-            self.assertEqual(call_opts["extractor_args"], DEFAULT_YOUTUBE_EXTRACTOR_ARGS)
+    def test_different_quality_produces_distinct_filenames(self):
+        info = {"title": "Title", "id": "id", "ext": "mp4"}
+        with YoutubeDL(self.options(quality="720p")) as a, YoutubeDL(self.options(quality="1080p")) as b:
+            self.assertNotEqual(a.prepare_filename(info), b.prepare_filename(info))
 
-    def test_extract_playlist_urls_uses_extractor_args(self):
-        """Verifica que extract_playlist_urls aplique DEFAULT_YOUTUBE_EXTRACTOR_ARGS."""
-        with patch("yt_dlp.YoutubeDL") as mock_ydl_class:
-            mock_ydl_instance = MagicMock()
-            mock_ydl_class.return_value.__enter__.return_value = mock_ydl_instance
-            mock_ydl_instance.extract_info.return_value = {
-                "entries": [{"id": "abc12345678", "url": "https://youtube.com/watch?v=abc12345678"}]
-            }
-            urls = DownloadEngine.extract_playlist_urls("https://www.youtube.com/playlist?list=PL123")
-            self.assertEqual(len(urls), 1)
-            call_opts = mock_ydl_class.call_args[0][0]
-            self.assertIn("extractor_args", call_opts)
-            self.assertEqual(call_opts["extractor_args"], DEFAULT_YOUTUBE_EXTRACTOR_ARGS)
+    def test_mp4_remux_is_before_thumbnail_embedding(self):
+        opts = DownloadEngine()._build_yt_dlp_options(False, Path("C:/review"), Path("ffmpeg"), "720p", True)
+        keys = [pp["key"] for pp in opts["postprocessors"]]
+        self.assertLess(keys.index("FFmpegVideoRemuxer"), keys.index("EmbedThumbnail"))
 
-    def test_download_btn_disabled_during_download_and_enqueue_btn_enabled(self):
-        """Al iniciar descarga: download_btn se deshabilita y enqueue_btn permanece habilitado."""
-        dest = Path("C:/Downloads")
-        self.app.download_queue.put(("https://youtube.com/watch?v=test1", "MP3", "320 kbps", dest))
+    def test_audio_never_remuxes_to_video(self):
+        keys = [pp["key"] for pp in self.options(True, "192 kbps")["postprocessors"]]
+        self.assertNotIn("FFmpegVideoRemuxer", keys)
 
-        with patch("threading.Thread") as mock_thread:
-            self.app._process_next_in_queue(apply_delay=False)
-            mock_thread.assert_called_once()
-            self.assertTrue(self.app.is_downloading)
+    def test_title_cannot_escape_destination(self):
+        with YoutubeDL(self.options()) as ydl:
+            name = ydl.prepare_filename({"title": "../../evil\\name", "id": "safe", "ext": "mp4"})
+        self.assertEqual(Path(name).parent, Path("C:/review"))
 
-            # download_btn debe estar disabled y texto Descargando...
-            self.app.download_btn.configure.assert_called_with(
-                state="disabled", text="Descargando..."
-            )
-            # enqueue_btn debe estar normal
-            self.app.enqueue_btn.configure.assert_called_with(state="normal")
+    def test_only_media_urls_and_known_hosts_are_allowed(self):
+        for url in ["http://localhost/watch?v=x", "https://youtube.com.evil.example/watch?v=x", "https://youtube.com/redirect?q=https://evil.example", "https://user:pass@youtube.com/watch?v=x", "https://youtube.com:9000/watch?v=x"]:
+            self.assertFalse(SecurityValidator.is_valid_youtube_url(url), url)
+        for url in ["https://youtu.be/abc_123", "https://youtube.com/shorts/abc", "https://music.youtube.com/watch?v=x", "https://youtube.com/playlist?list=PL123"]:
+            self.assertTrue(SecurityValidator.is_valid_youtube_url(url), url)
 
-    def test_start_download_task_blocked_when_already_downloading(self):
-        """Si is_downloading es True, start_download_task no añade a la cola ni inicia procesos."""
-        self.app.is_downloading = True
-        self.app.download_card.get_url.return_value = "https://www.youtube.com/watch?v=blocked"
-
-        with patch.object(self.app, "_add_to_queue") as mock_add, patch.object(
-            self.app, "_process_next_in_queue"
-        ) as mock_process:
-            self.app.start_download_task()
-            mock_add.assert_not_called()
-            mock_process.assert_not_called()
-
-    def test_enqueue_download_allowed_while_downloading(self):
-        """Si is_downloading es True, enqueue_download añade a la cola sin reiniciar el hilo."""
-        self.app.is_downloading = True
-        self.app.download_card.get_url.return_value = "https://www.youtube.com/watch?v=queued"
-        self.app.download_card.get_format.return_value = "MP3"
-        self.app.download_card.get_quality.return_value = "320 kbps"
-        self.app._get_current_destination = MagicMock(return_value=Path("C:/Downloads"))
-        self.app._validate_url = MagicMock(return_value=True)
-
-        with patch.object(self.app, "_add_to_queue") as mock_add, patch.object(
-            self.app, "_process_next_in_queue"
-        ) as mock_process:
-            self.app.enqueue_download()
-            mock_add.assert_called_once()
-            mock_process.assert_not_called()
-
-    def test_download_btn_reenabled_when_queue_completes(self):
-        """Al vaciarse la cola, download_btn vuelve a state='normal' y texto 'Descargar ahora'."""
-        self.app.is_downloading = True
-        # Cola vacía
-        self.app._process_next_in_queue(apply_delay=False)
-
-        self.assertFalse(self.app.is_downloading)
-        self.app.download_btn.configure.assert_called_with(
-            state="normal", text="Descargar ahora"
-        )
-        self.app.enqueue_btn.configure.assert_called_with(state="normal")
-        self.app.progress_widget.set_completed.assert_called_once()
-
-    def test_antibot_sign_in_bot_error_triggers_retry(self):
-        """Verifica que el error 'Sign in to confirm you are not a bot' sea detectado y reintentado."""
-        dest = Path("C:/Downloads")
-        attempts = 0
-
-        def fake_download(*args, **kwargs):
-            nonlocal attempts
-            attempts += 1
-            if attempts == 1:
-                raise Exception("ERROR: [youtube] jxQHd9Y2JWU: Sign in to confirm you're not a bot.")
-            return
-
-        self.app.downloader.execute_download.side_effect = fake_download
-
-        with patch("time.sleep") as mock_sleep:
-            self.app._run_download_thread(
-                url="https://youtube.com/watch?v=jxQHd9Y2JWU",
-                fmt="MP3",
-                quality="320 kbps",
-                destination=dest,
-            )
-
-            mock_sleep.assert_called_once()
-            self.assertEqual(attempts, 2)
-            # Debe haber notificado éxito a través de una lambda que invoca _on_single_download_success
-            last_after_call = self.app.after.call_args
-            self.assertEqual(last_after_call[0][0], 0)
-            success_callback = last_after_call[0][1]
-            with patch.object(self.app, "_on_single_download_success") as mock_success:
-                success_callback()
-                mock_success.assert_called_once()
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_playlist_preview_does_not_extract_every_video(self):
+        with patch("yt_dlp.YoutubeDL") as factory:
+            factory.return_value.__enter__.return_value.extract_info.return_value = None
+            DownloadEngine.extract_metadata_fast("https://youtube.com/playlist?list=PL123")
+            opts = factory.call_args.args[0]
+            self.assertEqual(opts["extract_flat"], "in_playlist")
+            self.assertEqual(opts["playlistend"], 1)

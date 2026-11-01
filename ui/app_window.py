@@ -1,537 +1,415 @@
+import logging
 import os
-import random
-import shutil
 import threading
-import time
 from pathlib import Path
-from queue import Queue
+from queue import Queue, Empty, Full, SimpleQueue
+from tkinter import filedialog
 import customtkinter as ctk
 
-from config.settings import (
-    APP_NAME,
-    ICON_PATH,
-    MUSIC_DIR,
-    VIDEO_DIR,
-)
+from config.settings import (APP_NAME, ICON_PATH, MUSIC_DIR, VIDEO_DIR, AUDIO_QUALITIES,
+    VIDEO_QUALITIES, PREFERENCES_FILE, LOG_FILE, UPDATE_CHECK_INTERVAL_SEC)
+from core.storage import JsonStore
 from core.validator import SecurityValidator
 from core.downloader import ANSI_ESCAPE_RE, DownloadEngine, clean_ansi as _clean_text
+from core.download_manager import DownloadManager, ACTIVE, FINISHED
 from core.updater import Updater
+from core.runtime import javascript_options
 from ui.theme import Colors
-from ui.components import (
-    Header,
-    DownloadCard,
-    PreviewCard,
-    ConsoleView,
-    ProgressBarWidget,
-    ModalDialog,
-    UpdateDialog,
-)
+from ui.components import Header, DownloadCard, PreviewCard, ConsoleView, ProgressBarWidget, ModalDialog
+from ui.components.queue_view import QueueView
 
 
 class AppWindow(ctk.CTk):
-    """Orquestador principal de la ventana y controlador de eventos de Youtify."""
-
-    _queue_total_items: int = 0
-    _queue_completed_items: int = 0
-    _custom_destination: Path | None = None
-
+    """All widgets are accessed on the Tk thread; workers send data through a queue."""
     def __init__(self):
         super().__init__()
-        self.title(f"{APP_NAME}")
-        self.geometry("700x710")
-        self.resizable(False, False)
-
-        # Fondo minimalista
-        self.configure(fg_color=Colors.APP_BG)
-
-        # Sistema de Cola Asíncrona (Download Queue)
-        self.download_queue = Queue()
-        self.is_downloading = False
-        self._queue_total_items: int = 0
-        self._queue_completed_items: int = 0
-        self._custom_destination: Path | None = None
-        self._current_task = None
+        self._closing = False
+        self._events = Queue(maxsize=500)
+        self._calls = SimpleQueue()
+        self._state_lock = threading.Lock()
+        self._pending_queue = None
+        self._pending_progress = None
         self._inspect_timer = None
-
-        # Motor desacoplado
-        self.downloader = DownloadEngine(
-            on_progress=self._handle_progress,
-            on_log=self._handle_log,
-            on_status=self._handle_status,
-        )
-
-        self._init_window_icon()
-        self.protocol("WM_DELETE_WINDOW", self._on_window_closing)
-        self._build_layout()
-
-        # Verificación no bloqueante de entorno JavaScript (Node.js) para desafíos antibot
-        self._check_nodejs_environment()
-
-        # Actualizador silencioso de compatibilidad yt-dlp en segundo plano
-        Updater.check_and_update_async(log_callback=self._handle_log)
-
-        # Comprobación no intrusiva de versiones en GitHub Releases tras montar la ventana
-        self.after(1500, self._check_app_updates)
-
-    def _init_window_icon(self) -> None:
+        self._preview_busy = False
+        self._preview_url = ""
+        self._preview_title = ""
+        self._preview_thread_url = ""
+        self._last_jobs = []
+        self._last_active = None
+        self._last_finished = None
+        self._render_revision = 0
+        self._update_banner = None
+        self._preferences = JsonStore(PREFERENCES_FILE)
+        prefs = self._preferences.read({})
+        self.prefs = prefs if isinstance(prefs, dict) else {}
+        self._custom_destination = Path(self.prefs["destination"]) if isinstance(self.prefs.get("destination"), str) and self.prefs["destination"] else None
+        self.title(APP_NAME)
+        scale = self._get_window_scaling()
+        available_width = int(self.winfo_screenwidth() / scale) - 60
+        available_height = int(self.winfo_screenheight() / scale) - 90
+        self.geometry(f"{min(1080, available_width)}x{min(760, available_height)}")
+        self.minsize(min(880, available_width), min(570, available_height))
+        self.configure(fg_color=Colors.APP_BG)
+        ctk.set_appearance_mode({"Oscuro": "Dark", "Claro": "Light", "Sistema": "System"}.get(self.prefs.get("theme"), "Dark"))
         if ICON_PATH.exists():
-            try:
-                self.iconbitmap(str(ICON_PATH))
-            except Exception:
-                pass
-        self.after(50, self._apply_window_icon)
+            self.after(50, lambda: self.iconbitmap(str(ICON_PATH)))
+        self.protocol("WM_DELETE_WINDOW", self._on_window_closing)
+        self.header = Header(self, ICON_PATH, self.prefs.get("theme", "Oscuro"), self._change_theme)
+        self.header.pack_forget()
+        self.header.grid(row=0, column=0, sticky="ew", padx=24, pady=(16, 12))
+        self.grid_columnconfigure(0, weight=1)
+        self.grid_rowconfigure(1, weight=1)
+        self._build_layout()
+        self.manager = DownloadManager(self._emit)
+        self._render_queue(self.manager.queue_state())
+        self.after(60, self._drain_events)
+        self.after(1500, self._check_app_updates)
+        Updater.check_and_update_async(log_callback=lambda msg: self._emit("log", msg))
+        runtime = javascript_options()["js_runtimes"]
+        self._emit("log", "[✓] Motor JavaScript disponible." if runtime else "[!] No hay motor JavaScript. Usa el instalador completo o instala Node.js LTS.")
+        self.bind("<Control-Return>", lambda event: self.start_download_task())
+        self.bind("<Control-l>", lambda event: self.download_card.url_entry.focus_set())
+        self.report_callback_exception = self._report_ui_error
 
-    def _apply_window_icon(self) -> None:
-        try:
-            if ICON_PATH.exists():
-                self.iconbitmap(str(ICON_PATH))
-        except Exception:
-            pass
+    def _build_layout(self):
+        self.content = ctk.CTkFrame(self, fg_color="transparent")
+        self.content.grid(row=1, column=0, sticky="nsew", padx=24, pady=(0, 12))
+        self.content.grid_columnconfigure(1, weight=1)
+        self.content.grid_rowconfigure(0, weight=1)
+        self.left_panel = ctk.CTkFrame(self.content, width=320, fg_color=Colors.CARD_BG,
+            corner_radius=14, border_width=1, border_color=Colors.BORDER)
+        self.left_panel.grid(row=0, column=0, sticky="nsew", padx=(0, 16))
+        self.left_panel.grid_propagate(False)
+        self.left_panel.grid_columnconfigure(0, weight=1)
+        self.left_panel.grid_rowconfigure(0, weight=1)
+        self.body = ctk.CTkScrollableFrame(self.left_panel, width=292, fg_color=Colors.CARD_BG,
+            corner_radius=10, scrollbar_button_color=Colors.BORDER)
+        self.body.grid(row=0, column=0, sticky="nsew", padx=4, pady=(6, 0))
+        ctk.CTkLabel(self.body, text="Nueva descarga", font=("Segoe UI", 18, "bold"),
+            text_color=Colors.TEXT_PRIMARY).pack(anchor="w", padx=12, pady=(6, 12))
+        self.download_card = DownloadCard(self.body, self._on_format_changed, self._on_url_modified)
+        fmt = self.prefs.get("format", "MP3 (audio)")
+        if fmt not in ["MP3 (audio)", "MP4 (video)"]:
+            fmt = "MP3 (audio)"
+        self.download_card.format_menu.set(fmt)
+        qualities = AUDIO_QUALITIES if fmt.startswith("MP3") else VIDEO_QUALITIES
+        self.download_card.quality_menu.configure(values=qualities)
+        quality = self.prefs.get("quality", "Máxima")
+        self.download_card.quality_menu.set(quality if quality in qualities else "Máxima")
+        self.download_card.thumbnail_var.set(bool(self.prefs.get("embed_thumbnail", True)))
+        self.preview_card = PreviewCard(self.body, dispatch=lambda fn: self._emit("call", fn), compact=True)
+        self.input_feedback = ctk.CTkLabel(self.body, text="Los enlaces se revisan automáticamente.", width=1,
+            wraplength=265, justify="left", anchor="w", font=("Segoe UI", 10), text_color=Colors.TEXT_MUTED)
+        # Feedback becomes visible when a link is being inspected.
+        destination = ctk.CTkFrame(self.body, fg_color="transparent")
+        destination.pack(fill="x", padx=12, pady=(8, 4))
+        ctk.CTkLabel(destination, text="Guardar en", font=("Segoe UI", 11, "bold"),
+            text_color=Colors.TEXT_SECONDARY).pack(anchor="w")
+        self.destination_label = ctk.CTkLabel(destination, text="", width=1, font=("Segoe UI", 10),
+            text_color=Colors.TEXT_MUTED, anchor="w", justify="left", height=18)
+        self.destination_label.pack(fill="x", pady=(0, 4))
+        folder_tools = ctk.CTkFrame(destination, fg_color="transparent")
+        folder_tools.pack(fill="x")
+        for text, command, width in [("Cambiar", self._choose_custom_folder, 78),
+                ("Abrir", self._open_destination_folder, 66), ("Restablecer", self._reset_destination, 90)]:
+            ctk.CTkButton(folder_tools, text=text, command=command, height=27, width=width,
+                fg_color=Colors.BTN_SECONDARY_BG, hover_color=Colors.BTN_SECONDARY_HOVER,
+                text_color=Colors.BTN_SECONDARY_TEXT, font=("Segoe UI", 10)).pack(side="left", padx=(0, 5))
+        actions = ctk.CTkFrame(self.left_panel, fg_color=Colors.CARD_BG, corner_radius=0)
+        actions.grid(row=1, column=0, sticky="ew", padx=18, pady=(10, 14))
+        self.download_btn = ctk.CTkButton(actions, text="Descargar ahora", command=self.start_download_task,
+            height=38, font=("Segoe UI", 13, "bold"), fg_color=Colors.PRIMARY,
+            hover_color=Colors.PRIMARY_HOVER, text_color=Colors.PRIMARY_TEXT, corner_radius=8)
+        self.download_btn.pack(fill="x", pady=(0, 6))
+        self.enqueue_btn = ctk.CTkButton(actions, text="Añadir a la cola", command=self.enqueue_download,
+            height=30, font=("Segoe UI", 12), fg_color=Colors.BTN_SECONDARY_BG,
+            hover_color=Colors.BTN_SECONDARY_HOVER, text_color=Colors.BTN_SECONDARY_TEXT, corner_radius=8)
+        self.enqueue_btn.pack(fill="x")
+        self.workspace = ctk.CTkFrame(self.content, fg_color=Colors.CARD_BG, corner_radius=14,
+            border_width=1, border_color=Colors.BORDER)
+        self.workspace.grid(row=0, column=1, sticky="nsew")
+        self.workspace.grid_columnconfigure(0, weight=1)
+        self.workspace.grid_rowconfigure(1, weight=1)
+        ctk.CTkLabel(self.workspace, text="Tus descargas", font=("Segoe UI", 20, "bold"),
+            text_color=Colors.TEXT_PRIMARY).grid(row=0, column=0, sticky="w", padx=20, pady=(18, 4))
+        self.tabs = ctk.CTkTabview(self.workspace, fg_color=Colors.CARD_BG, corner_radius=10, anchor="w",
+            segmented_button_fg_color=Colors.INPUT_BG, segmented_button_selected_color=Colors.BTN_SECONDARY_BG,
+            segmented_button_selected_hover_color=Colors.BTN_SECONDARY_HOVER,
+            segmented_button_unselected_color=Colors.INPUT_BG, segmented_button_unselected_hover_color=Colors.CARD_HOVER,
+            text_color=Colors.TEXT_PRIMARY)
+        self.tabs.grid(row=1, column=0, sticky="nsew", padx=12, pady=(0, 10))
+        queue_tab = self.tabs.add("Cola")
+        log_tab = self.tabs.add("Actividad")
+        queue_header = ctk.CTkFrame(queue_tab, fg_color="transparent")
+        queue_header.pack(fill="x", padx=6, pady=(4, 10))
+        self.queue_summary = ctk.CTkLabel(queue_header, text="Sin descargas", text_color=Colors.TEXT_MUTED,
+            font=("Segoe UI", 11), anchor="w", width=1)
+        self.queue_summary.pack(fill="x", pady=(0, 9))
+        toolbar = ctk.CTkFrame(queue_header, fg_color="transparent")
+        toolbar.pack(fill="x")
+        self.pause_btn = ctk.CTkButton(toolbar, text="Iniciar cola", width=108, height=29, font=("Segoe UI", 11),
+            command=self._toggle_pause, fg_color=Colors.BTN_SECONDARY_BG, text_color=Colors.BTN_SECONDARY_TEXT,
+            hover_color=Colors.BTN_SECONDARY_HOVER)
+        self.pause_btn.pack(side="left")
+        ctk.CTkButton(toolbar, text="Limpiar finalizadas", width=125, height=29, font=("Segoe UI", 10),
+            command=lambda: self.manager.clear_finished(), fg_color="transparent", text_color=Colors.TEXT_MUTED,
+            hover_color=Colors.CARD_HOVER).pack(side="right")
+        self.queue_view = QueueView(queue_tab, lambda jid: self.manager.cancel(jid),
+            lambda jid: self.manager.retry(jid), self._open_job)
+        self.console_view = ConsoleView(log_tab)
+        ctk.CTkButton(log_tab, text="Abrir diagnóstico", command=self._open_logs, height=26,
+            fg_color="transparent", text_color=Colors.TEXT_MUTED, hover_color=Colors.CARD_HOVER,
+            font=("Segoe UI", 10)).pack(anchor="w", padx=12, pady=(0, 8))
+        dock = ctk.CTkFrame(self, fg_color="transparent")
+        dock.grid(row=2, column=0, sticky="ew", padx=24)
+        self.progress_widget = ProgressBarWidget(dock)
+        self.progress_widget.pack_configure(pady=0)
+        self._on_format_changed(fmt, save=False)
+        footer = ctk.CTkFrame(self, fg_color="transparent")
+        footer.grid(row=3, column=0, sticky="ew", padx=26, pady=(6, 10))
+        ctk.CTkLabel(footer, text="Un archivo a la vez. Tú controlas la cola.", text_color=Colors.TEXT_MUTED,
+            font=("Segoe UI", 10)).pack(side="left")
+        ctk.CTkLabel(footer, text="Ctrl + L  Enlace     Ctrl + Enter  Descargar", text_color=Colors.TEXT_MUTED,
+            font=("Segoe UI", 10)).pack(side="right")
 
-    def _check_nodejs_environment(self) -> None:
-        """Verifica de forma no bloqueante si Node.js está disponible en el PATH del sistema."""
-        if not shutil.which("node"):
-            self.console_view.append_log(
-                "[i] Modo autónomo activo (clientes móviles iOS/Android). Node.js no detectado (opcional: https://nodejs.org/)."
-            )
+    def _emit(self, kind, data):
+        if self._closing: return
+        if kind == "call":
+            self._calls.put(data)
+        elif kind in {"queue", "progress"}:
+            with self._state_lock:
+                if kind == "queue": self._pending_queue = data
+                else: self._pending_progress = data
         else:
-            self.console_view.append_log("[✓] Entorno JavaScript: Node.js detectado para desafíos antibot.")
+            try: self._events.put_nowait((kind, data))
+            except Full: pass  # File diagnostics remain available; UI logs are bounded.
 
-    def _build_layout(self) -> None:
-        # 1. Cabecera minimalista limpia
-        self.header = Header(self, icon_path=ICON_PATH)
+    def _drain_events(self):
+        if self._closing: return
+        with self._state_lock:
+            latest_queue, latest_progress = self._pending_queue, self._pending_progress
+            self._pending_queue = self._pending_progress = None
+        for _ in range(10):
+            try: callback = self._calls.get_nowait()
+            except Empty: break
+            try:
+                callback()
+            except Exception:
+                logging.getLogger(__name__).exception("Error al aplicar una respuesta de segundo plano")
+        for _ in range(150):
+            try: kind, data = self._events.get_nowait()
+            except Empty: break
+            if kind == "log": self.console_view.append_log(data)
+        if latest_queue is not None: self._render_queue(latest_queue)
+        if latest_progress is not None:
+            job = next((j for j in self._last_jobs if j["id"] == latest_progress["id"]), None)
+            if job and job["status"] == "downloading" and latest_progress.get("revision", 0) >= self._render_revision:
+                self._render_revision = latest_progress.get("revision", self._render_revision)
+                self.progress_widget.set_progress(latest_progress["value"])
+                self.progress_widget.set_playlist_progress(latest_progress.get("playlist"))
+                speed, eta = latest_progress["speed"], latest_progress["eta"]
+                self.progress_widget.detail.configure(text=f"{speed}" + (f"   ·   Restante: {eta}" if eta else ""))
+        self.after(60, self._drain_events)
 
-        # 2. Tarjeta principal de formulario (URL + Formatos)
-        self.download_card = DownloadCard(
-            self,
-            on_format_change=self._on_format_changed,
-            on_url_modified=self._on_url_modified,
-        )
+    def _render_queue(self, data):
+        revision = data.get("revision", self._render_revision)
+        if revision < self._render_revision:
+            return
+        self._render_revision = revision
+        jobs, paused = data["jobs"], data["paused"]
+        self.progress_widget.set_playlist_progress(data.get("playlist"))
+        self._last_jobs = jobs
+        self.queue_view.render(jobs)
+        counts = {state: sum(j["status"] == state for j in jobs) for state in ["pending", "resolving", "completed", "failed", "cancelled"]}
+        active = next((j for j in jobs if j["status"] in ACTIVE), None)
+        waiting = counts["pending"] + counts["resolving"]
+        parts = [f"{waiting} en espera", f'{counts["completed"]} guardadas']
+        if counts["failed"]: parts.append(f'{counts["failed"]} con error')
+        if counts["cancelled"]: parts.append(f'{counts["cancelled"]} canceladas')
+        self.queue_summary.configure(text="   ·   ".join(parts) if jobs else "Tu próxima descarga empieza aquí")
+        self.pause_btn.configure(text="Iniciar cola" if paused else "Pausar cola", state="normal" if waiting or active else "disabled")
+        if active:
+            if self._last_active != active["id"]:
+                self.progress_widget.set_progress(0)
+                self.progress_widget.detail.configure(text="Conectando con YouTube…")
+            if active["status"] == "converting": self.progress_widget.set_converting()
+            else:
+                self.progress_widget.set_active_download()
+                if "current_progress" in data:
+                    self.progress_widget.set_progress(data["current_progress"])
+            self.progress_widget.status_badge.configure(text=("Guardando: " if active["status"] == "converting" else "Descargando: ") + active["title"][:66])
+            self._last_active = active["id"]
+        else:
+            finished = [j for j in jobs if j["status"] in FINISHED]
+            latest = finished[-1] if finished else None
+            if latest and (latest["id"], latest["status"]) != self._last_finished:
+                if latest["status"] == "completed": self.progress_widget.set_completed()
+                elif latest["status"] == "failed": self.progress_widget.set_error()
+                else:
+                    self.progress_widget.reset_state()
+                    self.progress_widget.status_badge.configure(text="Descarga cancelada")
+                    self.progress_widget.detail.configure(text="Puedes reintentarlo desde la cola")
+                self._last_finished = (latest["id"], latest["status"])
+            if waiting and paused: self.progress_widget.reset_state()
+            if counts["resolving"]:
+                self.progress_widget.status_badge.configure(text="Leyendo playlist…")
+                self.progress_widget.detail.configure(text="Puedes seguir usando la aplicación")
+            if not waiting and counts["failed"] and not active:
+                self.progress_widget.set_error(f'Cola finalizada · {counts["failed"]} con error')
+            self._last_active = None
+            if not jobs:
+                self.progress_widget.set_progress(0)
+                self.progress_widget.status_badge.configure(text="Todo listo para tu próxima descarga", text_color=Colors.TEXT_PRIMARY)
+                self.progress_widget.detail.configure(text="El progreso aparecerá aquí")
+                self._last_finished = None
 
-        # 3. Tarjeta de previsualización (anclada bajo download_card)
-        self.preview_card = PreviewCard(self)
+    def _save_preferences(self):
+        try:
+            self.prefs.update(format=self.download_card.get_format(), quality=self.download_card.get_quality(),
+                embed_thumbnail=self.download_card.get_embed_thumbnail(), destination=str(self._custom_destination) if self._custom_destination else "")
+            self._preferences.write(self.prefs)
+        except OSError:
+            self._emit("log", "[!] No se pudieron guardar las preferencias.")
 
-        # 4. Destino y botón sutil de carpeta
-        meta_bar = ctk.CTkFrame(self, fg_color="transparent")
-        meta_bar.pack(fill="x", padx=36, pady=(4, 8))
+    def _change_theme(self, selection):
+        ctk.set_appearance_mode({"Oscuro": "Dark", "Claro": "Light", "Sistema": "System"}[selection])
+        self.prefs["theme"] = selection
+        self._save_preferences()
 
-        self.destination_label = ctk.CTkLabel(
-            meta_bar,
-            text="",
-            text_color=Colors.TEXT_MUTED,
-            font=("Segoe UI", 11),
-            anchor="w",
-        )
-        self.destination_label.pack(side="left")
+    def _get_current_destination(self):
+        return self._custom_destination or (MUSIC_DIR if self.download_card.get_format().startswith("MP3") else VIDEO_DIR)
 
-        self.open_folder_btn = ctk.CTkButton(
-            meta_bar,
-            text="Abrir carpeta",
-            width=100,
-            height=26,
-            font=("Segoe UI", 11),
-            fg_color="transparent",
-            text_color=Colors.TEXT_SECONDARY,
-            hover_color=Colors.CARD_BG,
-            border_width=1,
-            border_color=Colors.BORDER,
-            corner_radius=6,
-            command=self._open_destination_folder,
-        )
-        self.open_folder_btn.pack(side="right")
+    def _on_format_changed(self, selection, save=True):
+        if not hasattr(self, "destination_label"): return
+        dest = self._get_current_destination()
+        label = str(dest)
+        self.destination_label.configure(text="…" + label[-62:] if len(label) > 63 else label)
+        if save: self._save_preferences()
 
-        self.change_folder_btn = ctk.CTkButton(
-            meta_bar,
-            text="Cambiar carpeta",
-            width=115,
-            height=26,
-            font=("Segoe UI", 11),
-            fg_color="transparent",
-            text_color=Colors.TEXT_SECONDARY,
-            hover_color=Colors.CARD_BG,
-            border_width=1,
-            border_color=Colors.BORDER,
-            corner_radius=6,
-            command=self._choose_custom_folder,
-        )
-        self.change_folder_btn.pack(side="right", padx=(0, 8))
-
-        # 5. Barra de acciones principales (Botones unificados)
-        buttons_container = ctk.CTkFrame(self, fg_color="transparent")
-        buttons_container.pack(fill="x", padx=36, pady=(2, 6))
-
-        # Botón secundario: Añadir a cola (estilo outline/subtle)
-        self.enqueue_btn = ctk.CTkButton(
-            buttons_container,
-            text="Añadir a la cola",
-            height=40,
-            font=("Segoe UI", 12, "bold"),
-            fg_color=Colors.BTN_SECONDARY_BG,
-            text_color=Colors.BTN_SECONDARY_TEXT,
-            hover_color=Colors.BTN_SECONDARY_HOVER,
-            border_width=1,
-            border_color=Colors.BTN_SECONDARY_BORDER,
-            corner_radius=8,
-            command=self.enqueue_download,
-        )
-        self.enqueue_btn.pack(side="left", fill="x", expand=True, padx=(0, 10))
-
-        # Botón principal destacado: Descargar ahora
-        self.download_btn = ctk.CTkButton(
-            buttons_container,
-            text="Descargar ahora",
-            height=40,
-            font=("Segoe UI", 12, "bold"),
-            fg_color=Colors.PRIMARY,
-            text_color="white",
-            hover_color=Colors.PRIMARY_HOVER,
-            corner_radius=8,
-            command=self.start_download_task,
-        )
-        self.download_btn.pack(side="left", fill="x", expand=True)
-
-        # 6. Barra de progreso ultra-fina
-        self.progress_widget = ProgressBarWidget(self)
-
-        # 7. Consola de registro
-        self.console_view = ConsoleView(self)
-
-        # Inicializar destino por defecto
-        self._on_format_changed("MP3 (audio)")
-
-    def _get_current_destination(self) -> Path:
-        if self._custom_destination is not None:
-            return self._custom_destination
-        fmt = self.download_card.get_format()
-        return MUSIC_DIR if fmt.startswith("MP3") else VIDEO_DIR
-
-    def _choose_custom_folder(self) -> None:
-        initial_dir = str(self._get_current_destination())
-        folder = ctk.filedialog.askdirectory(
-            title="Seleccionar carpeta de descarga",
-            initialdir=initial_dir,
-        )
+    def _choose_custom_folder(self):
+        dest = self._get_current_destination()
+        folder = filedialog.askdirectory(title="Seleccionar carpeta de descarga", initialdir=str(dest if dest.exists() else Path.home()))
         if folder:
             self._custom_destination = Path(folder)
-            display_name = self._custom_destination.name or str(self._custom_destination)
-            self.destination_label.configure(text=f"Destino: {display_name}")
+            self._on_format_changed(self.download_card.get_format())
 
-    def _on_format_changed(self, selection: str) -> None:
-        dest = self._get_current_destination()
-        display_name = dest.name or str(dest)
-        self.destination_label.configure(text=f"Destino: {display_name}")
+    def _reset_destination(self):
+        self._custom_destination = None
+        self._on_format_changed(self.download_card.get_format())
 
-    def _open_destination_folder(self) -> None:
-        dest = self._get_current_destination()
-        dest.mkdir(parents=True, exist_ok=True)
-        os.startfile(dest)
+    def _open_destination_folder(self):
+        try:
+            dest = self._get_current_destination()
+            dest.mkdir(parents=True, exist_ok=True)
+            os.startfile(dest)
+        except OSError as error:
+            ModalDialog.show_error(self, "No se pudo abrir la carpeta", str(error))
 
-    def _on_window_closing(self) -> None:
-        if self.is_downloading or not self.download_queue.empty():
-            if not ModalDialog.ask_confirm(
-                self,
-                title="Descargas en curso",
-                message="Hay descargas activas o en cola de espera.\n¿Seguro que deseas salir y cancelarlas?",
-            ):
-                return
-        self.destroy()
+    def _open_job(self, job):
+        target = Path(job["filepath"]) if job["filepath"] else Path(job["destination"])
+        try: os.startfile(target)
+        except OSError: ModalDialog.show_warning(self, "Archivo no encontrado", "El archivo se ha movido o eliminado. Abre la carpeta de destino para buscarlo.")
 
-    # ── Previsualización Automática (Preview Inspector) ───────────
-    def _on_url_modified(self, url: str) -> None:
+    def _open_logs(self):
+        try:
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            LOG_FILE.touch(exist_ok=True)
+            os.startfile(LOG_FILE)
+        except OSError as error: self._emit("log", str(error))
+
+    def _toggle_pause(self):
+        if self.manager.paused: self.manager.resume()
+        else:
+            self.manager.pause()
+            self._emit("log", "[i] Cola en pausa. El archivo actual terminará antes de detenerse.")
+
+    def _submit(self, start):
+        url = self.download_card.get_url()
+        if not SecurityValidator.is_valid_youtube_url(url):
+            ModalDialog.show_warning(self, "Revisa el enlace", "Pega un enlace de video, Shorts o playlist de YouTube para continuar.")
+            return
+        try:
+            self.manager.submit(url, self.download_card.get_format(), self.download_card.get_quality(),
+                self._get_current_destination(), self.download_card.get_embed_thumbnail(),
+                self._preview_title if self._preview_url == url else "", start=start)
+            self._save_preferences()
+            self.download_card.clear_url()
+            self.preview_card.hide_preview()
+            self.tabs.set("Cola")
+        except (ValueError, OSError) as error: ModalDialog.show_error(self, "No se pudo añadir", str(error))
+
+    def enqueue_download(self): self._submit(False)
+    def start_download_task(self): self._submit(True)
+
+    def _on_url_modified(self, url):
         if self._inspect_timer:
             self.after_cancel(self._inspect_timer)
             self._inspect_timer = None
-
-        clean_url = url.strip()
-        if not SecurityValidator.is_valid_youtube_url(clean_url):
-            self.preview_card.hide_preview()
-            return
-
-        self._inspect_timer = self.after(350, lambda: self._inspect_url_async(clean_url))
-
-    def _inspect_url_async(self, target_url: str) -> None:
-        def _task():
-            meta = DownloadEngine.extract_metadata_fast(target_url)
-
-            def _apply_meta():
-                if self.download_card.get_url() == target_url and meta:
-                    self.preview_card.show_preview(
-                        title=meta["title"],
-                        channel=meta["channel"],
-                        duration=f"{meta['duration']} canciones" if meta["is_playlist"] else meta["duration"],
-                        thumbnail_url=meta["thumbnail"],
-                        after_widget=self.download_card,
-                    )
-                else:
-                    self.preview_card.hide_preview()
-
-            self.after(0, _apply_meta)
-
-        threading.Thread(target=_task, daemon=True).start()
-
-    # ── Sistema de Cola y Descargas ──────────────────────────────
-    def _add_to_queue(
-        self,
-        url: str,
-        fmt: str,
-        quality: str,
-        destination: Path,
-        embed_thumbnail: bool = True,
-    ) -> None:
-        """Expande playlists en descargas individuales o añade un video único a la cola."""
-        playlist_urls = DownloadEngine.extract_playlist_urls(url)
-        added_count = 0
-        if playlist_urls:
-            added_count = len(playlist_urls)
-            self.console_view.append_log(f"[+] Playlist detectada: {added_count} videos. Añadiendo todos a la cola...")
-            for item_url in playlist_urls:
-                self.download_queue.put((item_url, fmt, quality, destination, embed_thumbnail))
-        else:
-            added_count = 1
-            self.download_queue.put((url, fmt, quality, destination, embed_thumbnail))
-            self.console_view.append_log(f"[+] Añadido a la cola: {url}")
-
-        if not self.is_downloading:
-            self._queue_total_items = self.download_queue.qsize()
-            self._queue_completed_items = 0
-            pending = self.download_queue.qsize()
-            self.progress_widget.status_badge.configure(text=f"En cola: {pending} elemento(s)")
-        else:
-            self._queue_total_items += added_count
-
-    def enqueue_download(self) -> None:
-        url = self.download_card.get_url()
-        if not self._validate_url(url):
-            return
-
-        fmt = self.download_card.get_format()
-        quality = self.download_card.get_quality()
-        destination = self._get_current_destination()
-        embed_thumb = self.download_card.get_embed_thumbnail()
-
-        self.download_card.clear_url()
+        self._preview_url = url
+        self._preview_title = ""
         self.preview_card.hide_preview()
-
-        self._add_to_queue(url, fmt, quality, destination, embed_thumb)
-
-        if not self.is_downloading:
-            self._process_next_in_queue()
-
-    def start_download_task(self) -> None:
-        if self.is_downloading:
-            return
-
-        url = self.download_card.get_url()
-        if not self._validate_url(url):
-            return
-
-        fmt = self.download_card.get_format()
-        quality = self.download_card.get_quality()
-        destination = self._get_current_destination()
-        embed_thumb = self.download_card.get_embed_thumbnail()
-
-        self.download_card.clear_url()
-        self.preview_card.hide_preview()
-
-        self._add_to_queue(url, fmt, quality, destination, embed_thumb)
-        self._process_next_in_queue()
-
-    def _validate_url(self, url: str) -> bool:
-        if not url:
-            ModalDialog.show_warning(
-                self,
-                title="Enlace requerido",
-                message="Por favor ingresa o pega un enlace de YouTube antes de continuar.",
-            )
-            return False
-        if not SecurityValidator.is_valid_youtube_url(url):
-            ModalDialog.show_error(
-                self,
-                title="Enlace no válido",
-                message="Ingresa un enlace verificado de YouTube o YouTube Music.\n\nEjemplo:\nhttps://www.youtube.com/watch?v=...",
-            )
-            return False
-        return True
-
-    def _process_next_in_queue(self, apply_delay: bool = False) -> None:
-        if self.download_queue.empty():
-            self.is_downloading = False
-            self.download_btn.configure(state="normal", text="Descargar ahora")
-            self.enqueue_btn.configure(state="normal")
-            self.progress_widget.set_completed()
-            self._queue_total_items = 0
-            self._queue_completed_items = 0
-            return
-
-        if apply_delay:
-            delay_sec = round(random.uniform(1.5, 4.0), 2)
-            delay_ms = int(delay_sec * 1000)
-            current_num = self._queue_completed_items + 1
-            total_num = max(self._queue_total_items, current_num)
-
-            # Mantener botón de descarga deshabilitado durante la pausa antibot
-            self.download_btn.configure(state="disabled", text="En cola...")
-            self.enqueue_btn.configure(state="normal")
-            self.progress_widget.set_active_download(current_num, total_num)
-            self.console_view.append_log(
-                f"[*] Pausa antibot preventiva de {delay_sec}s antes de la siguiente descarga..."
-            )
-            self.after(delay_ms, lambda: self._process_next_in_queue(apply_delay=False))
-            return
-
-        self.is_downloading = True
-        if self._queue_total_items == 0:
-            self._queue_total_items = self.download_queue.qsize()
-            self._queue_completed_items = 0
-
-        queue_item = self.download_queue.get()
-        if len(queue_item) == 5:
-            url, fmt, quality, destination, embed_thumbnail = queue_item
+        valid = SecurityValidator.is_valid_youtube_url(url)
+        self.input_feedback.configure(
+            text="Buscando detalles del enlace…" if valid else ("Videos, Shorts o playlists de YouTube." if url else "Los enlaces se revisan automáticamente."),
+            text_color=Colors.TEXT_MUTED)
+        if url:
+            self.input_feedback.pack(fill="x", padx=12, pady=(0, 6), after=self.download_card)
         else:
-            url, fmt, quality, destination = queue_item
-            embed_thumbnail = True
-        self._current_task = url
+            self.input_feedback.pack_forget()
+        if valid:
+            self._inspect_timer = self.after(650, lambda: self._inspect_url_async(url))
 
-        # Deshabilitar Descargar ahora durante la descarga, manteniendo Añadir a la cola funcional
-        self.download_btn.configure(state="disabled", text="Descargando...")
-        self.enqueue_btn.configure(state="normal")
+    def _inspect_url_async(self, url):
+        self._inspect_timer = None
+        if self._preview_busy or url != self._preview_url: return
+        self._preview_busy = True
+        self._preview_thread_url = url
+        def task():
+            meta = DownloadEngine.extract_metadata_fast(url)
+            self._emit("call", lambda: self._apply_preview(url, meta))
+        threading.Thread(target=task, daemon=True, name="video-preview").start()
 
-        # Posicionar el progreso inicial de este elemento en la barra continua acumulativa
-        if self._queue_total_items > 0:
-            starting_prog = self._queue_completed_items / self._queue_total_items
+    def _apply_preview(self, url, meta):
+        self._preview_busy = False
+        if url != self._preview_url:
+            if SecurityValidator.is_valid_youtube_url(self._preview_url): self._inspect_url_async(self._preview_url)
+            return  # An old response must never hide a newer preview.
+        if meta:
+            self.input_feedback.configure(text="Enlace listo para añadir.", text_color=Colors.SUCCESS)
+            self._preview_title = meta["title"]
+            duration = f'{meta["duration"]} elementos' if meta["is_playlist"] else meta["duration"]
+            self.preview_card.show_preview(meta["title"], meta["channel"], duration, meta["thumbnail"], self.download_card)
         else:
-            starting_prog = 0.0
-        self.progress_widget.set_progress(starting_prog)
+            self.input_feedback.configure(text="Vista previa no disponible. Puedes intentar descargar el enlace.", text_color=Colors.TEXT_MUTED)
 
-        current_num = self._queue_completed_items + 1
-        total_num = max(self._queue_total_items, current_num)
-        self.progress_widget.set_active_download(current_num, total_num)
-        self.console_view.append_log(f"─── Procesando: {fmt} (Restantes en cola: {self.download_queue.qsize()}) ───")
+    def _check_app_updates(self):
+        if self._closing:
+            return
+        Updater.check_app_update_async(lambda release: self._emit("call", lambda: self._show_update_ready(release)))
+        self.after(UPDATE_CHECK_INTERVAL_SEC * 1000, self._check_app_updates)
 
-        threading.Thread(
-            target=self._run_download_thread,
-            args=(url, fmt, quality, destination, embed_thumbnail),
-            daemon=True,
-        ).start()
+    def _show_update_ready(self, release):
+        if self._closing or not Updater.should_notify(release.tag_name):
+            return
+        if self._update_banner:
+            self._update_banner.destroy()
+        banner = self._update_banner = ctk.CTkFrame(self, fg_color=Colors.BTN_SECONDARY_BG, corner_radius=8)
+        banner.grid(row=4, column=0, sticky="ew", padx=24, pady=(0, 8))
+        ctk.CTkLabel(banner, text=f"Versión {release.version} lista. Se aplicará al volver a abrir Youtify.",
+            font=("Segoe UI", 11), text_color=Colors.TEXT_PRIMARY).pack(side="left", padx=12, pady=6)
+        ctk.CTkButton(banner, text="Entendido", width=85, height=26, command=banner.grid_remove,
+            fg_color=Colors.PRIMARY, text_color=Colors.PRIMARY_TEXT).pack(side="right", padx=10)
+        Updater._update_state(last_notified_tag=release.tag_name)
 
-    def _run_download_thread(
-        self,
-        url: str,
-        fmt: str,
-        quality: str,
-        destination: Path,
-        embed_thumbnail: bool = True,
-    ) -> None:
-        max_attempts = 2
-        for attempt in range(1, max_attempts + 1):
-            try:
-                self.downloader.execute_download(
-                    url=url,
-                    format_type=fmt,
-                    quality=quality,
-                    destination_dir=destination,
-                    embed_thumbnail=embed_thumbnail,
-                )
-                self.after(0, lambda et=embed_thumbnail: self._on_single_download_success(embed_thumbnail=et))
+    def _report_ui_error(self, exc, value, traceback):
+        logging.getLogger(__name__).error("Error de interfaz", exc_info=(exc, value, traceback))
+        self._emit("log", f"[ERROR] {value}")
+
+    def _on_window_closing(self):
+        if any(j["status"] in ACTIVE for j in self._last_jobs):
+            if not ModalDialog.ask_confirm(self, "Cerrar Youtify", "La descarga actual se detendrá. La cola quedará guardada para continuar cuando vuelvas a abrir Youtify."):
                 return
-            except Exception as error:
-                err_msg = _clean_text(str(error))
-                is_antibot = (
-                    "403" in err_msg
-                    or "Forbidden" in err_msg
-                    or "Sign in to confirm you're not a bot" in err_msg
-                    or "not a bot" in err_msg.lower()
-                )
-
-                if is_antibot and attempt < max_attempts:
-                    retry_wait = round(random.uniform(5.0, 8.0), 1)
-                    retry_log = (
-                        f"[!] Desafío antibot de YouTube detectado.\n"
-                        f"[*] Reintentando automáticamente en {retry_wait}s (intento {attempt + 1}/{max_attempts})..."
-                    )
-                    self.after(0, lambda msg=retry_log: self.console_view.append_log(msg))
-                    time.sleep(retry_wait)
-                    continue
-
-                if is_antibot:
-                    err_msg += (
-                        "\n\nYouTube activó una verificación antibot temporal para esta dirección IP.\n"
-                        "Se recomienda esperar unos minutos o instalar Node.js LTS (https://nodejs.org/) si persiste."
-                    )
-
-                final_err = f"[ERROR] {err_msg}"
-                self.after(0, lambda msg=final_err: self.console_view.append_log(msg))
-                # El elemento falló definitivamente: contar como procesado para la barra continua
-                self.after(0, self._on_item_failed_definitively)
-                # Continuar procesando los siguientes elementos de la cola con pausa preventiva
-                self.after(0, lambda: self._process_next_in_queue(apply_delay=True))
-                self.after(
-                    0,
-                    lambda msg=err_msg: self._show_download_error(msg),
-                )
-                return
-
-    def _on_item_failed_definitively(self) -> None:
-        self._queue_completed_items += 1
-        if self._queue_total_items > 0:
-            overall = min(1.0, self._queue_completed_items / self._queue_total_items)
-            self.progress_widget.set_progress(overall)
-
-    def _show_download_error(self, message: str) -> None:
-        try:
-            if self.winfo_exists():
-                ModalDialog.show_error(self, title="Error de descarga", message=message)
-        except Exception:
-            pass
-
-    def _on_single_download_success(self, embed_thumbnail: bool = True) -> None:
-        self._queue_completed_items += 1
-        if self._queue_total_items > 0:
-            overall = min(1.0, self._queue_completed_items / self._queue_total_items)
-            self.progress_widget.set_progress(overall)
-        else:
-            self.progress_widget.set_progress(1.0)
-        if embed_thumbnail:
-            self.console_view.append_log("[✓] Archivo guardado y carátula incrustada con éxito.")
-        else:
-            self.console_view.append_log("[✓] Archivo guardado con éxito.")
-        self._process_next_in_queue(apply_delay=True)
-
-    # ── Callbacks de eventos desde el motor ───────────────────────
-    def _handle_progress(self, progress_float: float, pct_str: str, speed_str: str, eta_str: str) -> None:
-        if self._queue_total_items > 0:
-            overall = max(0.0, min(1.0, (self._queue_completed_items + progress_float) / self._queue_total_items))
-        else:
-            overall = max(0.0, min(1.0, progress_float))
-
-        current_num = self._queue_completed_items + 1
-        total_num = max(self._queue_total_items, current_num)
-
-        self.after(0, lambda: self.progress_widget.set_progress(overall))
-        self.after(0, lambda: self.progress_widget.set_active_download(current_num, total_num))
-
-    def _handle_log(self, message: str) -> None:
-        clean_msg = _clean_text(message)
-        if clean_msg:
-            self.after(0, lambda: self.console_view.append_log(clean_msg))
-
-    def _handle_status(self, status_code: str, label: str) -> None:
-        if status_code == "converting":
-            current_num = self._queue_completed_items + 1
-            total_num = max(self._queue_total_items, current_num)
-            self.after(0, lambda: self.progress_widget.set_converting(current_num, total_num))
-
-    # ── Actualizaciones de software ──────────────────────────────
-    def _check_app_updates(self) -> None:
-        """Lanza la verificación de versiones en GitHub en un hilo de fondo."""
-        Updater.check_app_update_async(
-            callback=lambda release_info: self.after(0, lambda: self._prompt_update(release_info))
-        )
-
-    def _prompt_update(self, release_info) -> None:
-        """Presenta el diálogo modal de actualización de forma segura si la ventana sigue activa."""
-        try:
-            if self.winfo_exists():
-                UpdateDialog(self, release_info=release_info)
-        except Exception:
-            pass
+        self._save_preferences()
+        self._closing = True
+        self.manager.close()
+        self.destroy()

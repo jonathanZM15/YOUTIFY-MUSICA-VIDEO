@@ -5,7 +5,7 @@ from typing import Optional
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.1.0"
+APP_VERSION = "1.3.2"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)
@@ -25,7 +25,16 @@ MUSIC_DIR = USER_DOWNLOADS / "Musica_Descargada"
 VIDEO_DIR = USER_DOWNLOADS / "descargas_videos"
 APPDATA_FFMPEG_DIR = LOCAL_APPDATA / APP_NAME / "ffmpeg"
 BUNDLED_FFMPEG_DIR = BASE_DIR / "ffmpeg"
-ICON_PATH = BASE_DIR / "icon.ico"
+RESOURCE_DIR = Path(getattr(sys, "_MEIPASS", BASE_DIR))
+ICON_PATH = RESOURCE_DIR / "icon.ico"
+DATA_DIR = Path(os.environ.get("YOUTIFY_DATA_DIR", LOCAL_APPDATA / APP_NAME))
+PREFERENCES_FILE = DATA_DIR / "preferences.json"
+QUEUE_FILE = DATA_DIR / "queue.json"
+LOG_FILE = DATA_DIR / "logs" / "youtify.log"
+UPDATE_VERSIONS_DIR = DATA_DIR / "versions"
+ACTIVE_VERSION_FILE = DATA_DIR / "active_version.json"
+UPDATE_ASSET_NAME = "Youtify-Update-x64.zip"
+UPDATE_CHECK_INTERVAL_SEC = 6 * 60 * 60
 
 # Límites y optimizaciones de hardware / memoria
 MAX_LOG_BUFFER_LINES = 200
@@ -39,19 +48,19 @@ CONCURRENT_FRAGMENT_DOWNLOADS = 4
 # Fuentes remotas de componentes seguros
 FFMPEG_OFFICIAL_URL = (
     "https://github.com/BtbN/FFmpeg-Builds/releases/download/"
-    "latest/ffmpeg-master-latest-win64-gpl.zip"
+    "autobuild-2026-10-28-19-47/ffmpeg-N-128142-g28fda48e0b-win64-gpl.zip"
 )
 
 # Hash SHA-256 esperado del archivo ZIP de FFmpeg para verificación de integridad.
 # Establecer a None deshabilita la verificación (por defecto).
 # Ejemplo: "a1b2c3d4e5..." (hash hexadecimal de 64 caracteres)
-FFMPEG_EXPECTED_SHA256: Optional[str] = None
+FFMPEG_EXPECTED_SHA256 = "3b8088e8f0c6eb9cfc32fb7eddecd8ee8cb5657bc93bce876dc5c7a1580af736"
 
 # Integración con GitHub Releases (Actualizaciones automáticas)
 GITHUB_REPO = "jonathanZM15/YOUTIFY-MUSICA-VIDEO"
 GITHUB_API_LATEST_RELEASE = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
 GITHUB_RELEASES_URL = f"https://github.com/{GITHUB_REPO}/releases"
-UPDATE_STATE_FILE = LOCAL_APPDATA / APP_NAME / "update_state.json"
+UPDATE_STATE_FILE = DATA_DIR / "update_state.json"
 
 # Dominios autorizados de YouTube (seguridad cibernética / anti-phishing / anti-injection)
 VALID_YOUTUBE_HOSTS = frozenset({
@@ -63,13 +72,8 @@ VALID_YOUTUBE_HOSTS = frozenset({
     "www.youtu.be",
 })
 
-# Configuración de extracción antibot de YouTube: emulación de clientes móviles oficiales (iOS / Android / Web)
-# Elimina la necesidad de Node.js o runtimes externos en la máquina del usuario final.
-DEFAULT_YOUTUBE_EXTRACTOR_ARGS = {
-    "youtube": {
-        "player_client": ["ios", "android", "web"],
-    }
-}
+# Let the tested yt-dlp version choose compatible clients. EJS is shipped locally.
+DEFAULT_YOUTUBE_EXTRACTOR_ARGS = {}
 
 
 # Opciones disponibles en la interfaz

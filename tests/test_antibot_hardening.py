@@ -1,154 +1,47 @@
+"""Runtime and updater regressions: no network or environment mutations."""
+import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
-import queue
-import time
 from pathlib import Path
-
-from ui.app_window import AppWindow
+from unittest.mock import patch
+from core.runtime import javascript_options
 from core.updater import Updater
-from core.downloader import DownloadEngine
+from core.storage import JsonStore
 
 
-class TestAntibotHardening(unittest.TestCase):
-    def setUp(self):
-        # Evitar crear la ventana gráfica real en tests headless
-        with patch.object(AppWindow, "__init__", lambda s: None):
-            self.app = AppWindow()
-            self.app.download_queue = queue.Queue()
-            self.app.is_downloading = False
-            self.app._queue_total_items = 0
-            self.app._queue_completed_items = 0
-            self.app.downloader = MagicMock(spec=DownloadEngine)
-            self.app.console_view = MagicMock()
-            self.app.progress_widget = MagicMock()
-            self.app.download_btn = MagicMock()
-            self.app.enqueue_btn = MagicMock()
-            self.app.after = MagicMock()
-            self.app.winfo_exists = MagicMock(return_value=True)
+class TestRuntimeAndUpdates(unittest.TestCase):
+    def test_node_is_configured_with_explicit_path(self):
+        with patch("core.runtime.shutil.which", side_effect=lambda name: "C:/node.exe" if name == "node" else None):
+            self.assertIn("node", javascript_options()["js_runtimes"])
 
-    def test_nodejs_detection_found(self):
-        with patch("shutil.which", return_value="C:\\Program Files\\nodejs\\node.EXE"):
-            AppWindow._check_nodejs_environment(self.app)
-            self.app.console_view.append_log.assert_called_with(
-                "[✓] Entorno JavaScript: Node.js detectado para desafíos antibot."
-            )
+    def test_no_runtime_does_not_enable_remote_code_downloads(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("core.runtime.BASE_DIR", Path(tmp)), patch("core.runtime.shutil.which", return_value=None):
+            self.assertEqual(javascript_options(), {"js_runtimes": {}})
 
-    def test_nodejs_detection_missing(self):
-        with patch("shutil.which", return_value=None):
-            AppWindow._check_nodejs_environment(self.app)
-            args, _ = self.app.console_view.append_log.call_args
-            self.assertIn("Node.js no detectado", args[0])
-            self.assertIn("https://nodejs.org/", args[0])
+    def test_bundled_node_takes_precedence(self):
+        with tempfile.TemporaryDirectory() as tmp, patch("core.runtime.BASE_DIR", Path(tmp)):
+            runtime = Path(tmp) / "runtime"
+            runtime.mkdir()
+            (runtime / "node.exe").touch()
+            with patch("core.runtime.shutil.which", return_value="other/node.exe"):
+                self.assertEqual(javascript_options()["js_runtimes"]["node"]["path"], str(runtime / "node.exe"))
 
-    def test_queue_delay_first_item_no_delay(self):
-        # Simular 2 elementos en cola
-        dest = Path("C:/Downloads")
-        self.app.download_queue.put(("https://youtube.com/watch?v=1", "MP3", "320 kbps", dest))
-        self.app.download_queue.put(("https://youtube.com/watch?v=2", "MP3", "320 kbps", dest))
+    def test_semantic_version_prerelease_is_older(self):
+        self.assertFalse(Updater.is_newer_version("v1.2.0rc1", "1.2.0"))
+        self.assertTrue(Updater.is_newer_version("v1.2.1", "1.2.0"))
 
-        with patch("threading.Thread") as mock_thread:
-            # Primera descarga (apply_delay=False por defecto)
-            self.app._process_next_in_queue(apply_delay=False)
-            # Debe iniciar inmediatamente el hilo, sin programar after con delay
-            mock_thread.assert_called_once()
-            self.assertTrue(self.app.is_downloading)
+    def test_invalid_version_is_ignored(self):
+        self.assertFalse(Updater.is_newer_version("surprise", "1.2.0"))
 
-    def test_queue_delay_subsequent_items(self):
-        # Simular segundo elemento con apply_delay=True
-        dest = Path("C:/Downloads")
-        self.app.download_queue.put(("https://youtube.com/watch?v=2", "MP3", "320 kbps", dest))
+    def test_update_urls_must_belong_to_this_repository(self):
+        self.assertTrue(Updater._valid_release_url("https://github.com/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases/tag/v1.2.0"))
+        for url in ["https://evil.example/setup.exe", "https://github.com.evil.example/jonathanZM15/YOUTIFY-MUSICA-VIDEO/releases", "file:///setup.exe"]:
+            self.assertFalse(Updater._valid_release_url(url))
 
-        self.app._process_next_in_queue(apply_delay=True)
-
-        # Debe llamar a self.after con un delay entre 1500 y 4000 ms
-        self.app.after.assert_called_once()
-        delay_ms, callback = self.app.after.call_args[0]
-        self.assertTrue(1500 <= delay_ms <= 4000, f"Delay {delay_ms} fuera del rango 1500-4000ms")
-        self.assertIn("Pausa antibot preventiva", self.app.console_view.append_log.call_args[0][0])
-
-    def test_403_isolated_retry_succeeds(self):
-        # Simular error 403 en intento 1 y éxito en intento 2
-        dest = Path("C:/Downloads")
-        call_count = 0
-
-        def fake_download(*args, **kwargs):
-            nonlocal call_count
-            call_count += 1
-            if call_count == 1:
-                raise Exception("HTTP Error 403: Forbidden")
-            return
-
-        self.app.downloader.execute_download.side_effect = fake_download
-
-        with patch("time.sleep") as mock_sleep:
-            self.app._run_download_thread(
-                url="https://youtube.com/watch?v=1",
-                fmt="MP3",
-                quality="320 kbps",
-                destination=dest,
-            )
-
-            # Debe haber dormido entre 5.0 y 8.0s
-            mock_sleep.assert_called_once()
-            sleep_duration = mock_sleep.call_args[0][0]
-            self.assertTrue(5.0 <= sleep_duration <= 8.0, f"Sleep {sleep_duration} fuera de rango 5-8s")
-
-            # Debe haber ejecutado 2 intentos
-            self.assertEqual(call_count, 2)
-            # Debe haber notificado éxito a través de una lambda que invoca _on_single_download_success
-            last_after_call = self.app.after.call_args
-            self.assertEqual(last_after_call[0][0], 0)
-            success_callback = last_after_call[0][1]
-            # Ejecutar el callback para verificar que invoca _on_single_download_success
-            with patch.object(self.app, "_on_single_download_success") as mock_success:
-                success_callback()
-                mock_success.assert_called_once()
-
-    def test_403_permanent_failure_continues_queue(self):
-        # Simular error 403 persistente en ambos intentos
-        dest = Path("C:/Downloads")
-        self.app.downloader.execute_download.side_effect = Exception("HTTP Error 403: Forbidden")
-
-        with patch("time.sleep") as mock_sleep, patch.object(self.app, "_show_download_error") as mock_show_error:
-            self.app._run_download_thread(
-                url="https://youtube.com/watch?v=1",
-                fmt="MP3",
-                quality="320 kbps",
-                destination=dest,
-            )
-
-            # Debe haber dormido 1 vez antes del reintento
-            mock_sleep.assert_called_once()
-            # Debe haber llamado execute_download 2 veces
-            self.assertEqual(self.app.downloader.execute_download.call_count, 2)
-
-            # Debe haber llamado a _process_next_in_queue con delay para el siguiente elemento
-            after_calls = [call[0] for call in self.app.after.call_args_list]
-            # Verificar que alguna de las llamadas a after programa _process_next_in_queue
-            scheduled_funcs = [call[1] for call in after_calls if len(call) >= 2]
-            
-            # Ejecutar las funciones programadas con after para verificar que continúa la cola
-            processed_next = False
-            with patch.object(self.app, "_process_next_in_queue") as mock_next_queue:
-                for fn in scheduled_funcs:
-                    if callable(fn):
-                        fn()
-                mock_next_queue.assert_called_with(apply_delay=True)
-
-    def test_updater_yt_dlp_timestamp_logging(self):
-        # Verificar que Updater registra y reporta fecha
-        logs = []
-        with patch("subprocess.run") as mock_sub:
-            mock_sub.return_value = MagicMock(returncode=0, stdout="Requirement already satisfied")
-            Updater.check_and_update_async(log_callback=logs.append)
-            # Dar tiempo al hilo de Updater para ejecutar
-            time.sleep(0.3)
-            
-            # Verificar logs generados
-            joined_logs = "\n".join(logs)
-            self.assertIn("yt-dlp", joined_logs)
-            self.assertTrue(any("versión" in log or "actualización" in log for log in logs))
-
-
-if __name__ == "__main__":
-    unittest.main()
+    def test_json_store_preserves_previous_data_if_replace_fails(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            store = JsonStore(Path(tmp) / "state.json")
+            store.write({"old": True})
+            with patch("core.storage.os.replace", side_effect=OSError("disk error")):
+                with self.assertRaises(OSError): store.write({"new": True})
+            self.assertEqual(store.read(), {"old": True})
+            self.assertFalse(list(Path(tmp).glob("*.tmp")))

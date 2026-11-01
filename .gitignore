@@ -16,9 +16,11 @@ build/
 dist/
 installer/
 *.spec
+!Youtify.spec
 
 # Binarios pesados locales
 ffmpeg/
+runtime/
 
 # Logs y volcados de depuración
 *.log

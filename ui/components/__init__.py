@@ -4,7 +4,6 @@ from .preview_card import PreviewCard
 from .console_view import ConsoleView
 from .progress_bar import ProgressBarWidget
 from .modal_dialog import ModalDialog
-from .update_dialog import UpdateDialog
 
 __all__ = [
     "Header",
@@ -13,5 +12,4 @@ __all__ = [
     "ConsoleView",
     "ProgressBarWidget",
     "ModalDialog",
-    "UpdateDialog",
 ]
