@@ -45,8 +45,14 @@ jobs:
       - name: Build executable and check bundled components
         run: python scripts/build.py --skip-tests
 
-      - name: Install Inno Setup compiler
-        run: choco install innosetup --version=6.5.4 --no-progress -y
+      - name: Ensure Inno Setup compiler
+        run: |
+          $compilerPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path -LiteralPath $compilerPath)) {
+            choco install innosetup --version=6.5.4 --no-progress -y
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed" }
+          }
+          if (-not (Test-Path -LiteralPath $compilerPath)) { throw "Inno Setup compiler not found" }
 
       - name: Build executable installer
         run: '& "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe" installer.iss'

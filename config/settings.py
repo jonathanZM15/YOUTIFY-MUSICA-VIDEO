@@ -5,7 +5,7 @@ from typing import Optional
 
 # Versión y metadatos del software
 APP_NAME = "Youtify"
-APP_VERSION = "1.3.3"
+APP_VERSION = "1.3.4"
 APP_AUTHOR = "jonathanZM15"
 
 # Resolución de directorios de ejecución (Portable / Instalado / Desarrollo)

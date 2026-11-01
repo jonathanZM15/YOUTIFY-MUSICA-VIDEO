@@ -1,4 +1,4 @@
-# Youtify v1.3.3
+# Youtify v1.3.4
 
 Aplicación de escritorio para Windows que guarda audio MP3 y video MP4 de YouTube.
 Descarga únicamente contenido que tengas derecho a guardar.
@@ -17,6 +17,11 @@ La cola se guarda entre sesiones. Al reiniciar, los pendientes esperan a que pul
 **Iniciar cola**; los archivos `.part` permiten a yt-dlp continuar transferencias
 cuando el servidor lo admite. Cancelar durante una conversión conserva el estado
 como cancelado. Cerrar durante una descarga guarda el trabajo como pendiente.
+
+## Cambios de 1.3.4
+
+* La compilación en GitHub reutiliza Inno Setup cuando ya está instalado en el
+  ejecutor y solo lo instala cuando falta, evitando conflictos de versiones.
 
 ## Cambios de 1.3.3
 
@@ -151,7 +156,7 @@ crean widgets reales y usan datos temporales aislados.
 
 El workflow compila en cada push a `main` y permite ejecución manual. Valida las
 pruebas antes de compilar, incluye los componentes y publica el instalador solo
-al recibir una etiqueta que coincida con `APP_VERSION` (por ejemplo `v1.3.3`).
+al recibir una etiqueta que coincida con `APP_VERSION` (por ejemplo `v1.3.4`).
 Los artefactos incluyen el instalador, `Youtify-Update-x64.zip`, SHA-256 y el
 informe de componentes. Cada release debe conservar ese nombre exacto para el ZIP;
 GitHub proporciona su campo `digest` SHA-256 para la comprobación automática.
