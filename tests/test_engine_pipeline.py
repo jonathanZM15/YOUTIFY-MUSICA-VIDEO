@@ -1,12 +1,12 @@
 """Real download/postprocessing pipeline using local synthetic media, no YouTube access."""
 import json
-import os
+from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import unittest
 from unittest.mock import patch
-from urllib.parse import parse_qs, urlparse
 from PIL import Image
 from mutagen.mp3 import MP3
 from yt_dlp import YoutubeDL as RealYoutubeDL
@@ -19,6 +19,7 @@ class TestEnginePipeline(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.tmp = tempfile.TemporaryDirectory()
+        cls.addClassCleanup(cls.tmp.cleanup)
         cls.root = Path(cls.tmp.name)
         cls.source = cls.root / "fixture.webm"
         cls.thumbnail = cls.root / "cover.png"
@@ -27,20 +28,32 @@ class TestEnginePipeline(unittest.TestCase):
             "-f", "lavfi", "-i", "color=c=teal:s=320x180:r=10", "-f", "lavfi", "-i", "sine=frequency=440",
             "-t", "0.6", "-c:v", "libvpx-vp9", "-c:a", "libopus", str(cls.source)],
             check=True, capture_output=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
-
-    @classmethod
-    def tearDownClass(cls): cls.tmp.cleanup()
+        # Exercise the HTTP path used by real downloads. yt-dlp's optional
+        # file:// handler can retain source handles until garbage collection,
+        # which prevents Windows runners from deleting the fixture directory.
+        class Handler(SimpleHTTPRequestHandler):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, directory=str(cls.root), **kwargs)
+            def log_message(self, *args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        worker = threading.Thread(target=server.serve_forever, daemon=True)
+        worker.start()
+        cls.base_url = f"http://127.0.0.1:{server.server_port}"
+        def close_server():
+            server.shutdown()
+            server.server_close()
+            worker.join(3)
+        cls.addClassCleanup(close_server)
 
     def run_engine(self, fmt, video_id, cover):
-        source, thumbnail = self.source, self.thumbnail
+        source, thumbnail = self.base_url+"/fixture.webm", self.base_url+"/cover.png"
         class FixtureYoutubeDL(RealYoutubeDL):
-            def __init__(self, options):
-                super().__init__({**options, "enable_file_urls": True})
             def extract_info(self, url, download=True, *args, **kwargs):
                 info = {"id": video_id, "title": "Same fixture title", "extractor": "fixture", "extractor_key": "Fixture",
-                    "webpage_url": url, "duration": 0.6, "uploader": "Youtify tests", "thumbnail": thumbnail.as_uri(),
-                    "thumbnails": [{"url": thumbnail.as_uri(), "id": "cover", "ext": "png"}],
-                    "formats": [{"format_id": "test", "url": source.as_uri(), "ext": "webm",
+                    "webpage_url": url, "duration": 0.6, "uploader": "Youtify tests", "thumbnail": thumbnail,
+                    "thumbnails": [{"url": thumbnail, "id": "cover", "ext": "png"}],
+                    "formats": [{"format_id": "test", "url": source, "ext": "webm",
                         "vcodec": "vp9", "acodec": "opus", "height": 180, "width": 320}]}
                 return self.process_ie_result(info, download=download)
         dest = self.root / ("audio" if fmt.startswith("MP3") else "video")
